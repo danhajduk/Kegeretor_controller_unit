@@ -58,10 +58,52 @@ This project is a custom Kegerator control system, which monitors temperature, f
 
 4. Set up the correct pins for your ESP32 in `config.h`:
    ```cpp
-   #define ONE_WIRE_BUS 4
-   #define COOLING_RELAY_PIN 12
-   #define FAN_RELAY_PIN 13
-   #define DOOR_SENSOR_PIN 5
+    // Pin where the data line is connected for temperature sensors
+    #define ONE_WIRE_BUS 15  // Define OneWire bus pin for DS18B20 temperature sensors
+    
+    // Create a OneWire instance to communicate with OneWire devices
+    extern OneWire oneWire;
+    
+    // Pass OneWire reference to DallasTemperature library
+    extern DallasTemperature sensors;
+    
+    #define TELNET_PORT 23  // Standard Telnet port
+    
+    // MQTT settings
+    #define MQTT_SERVER <mwtt server>
+    #define MQTT_PORT 1883
+    #define MQTT_MAX_PACKET_SIZE 1024
+    
+    // MQTT discovery topic base
+    #define DISCOVERY_PREFIX "homeassistant"
+    #define DEVICE_NAME "kegerator"
+    #define DEVICE_FRIENDLY_NAME "Kegerator"
+    
+    // Cooling system settings
+    #define COOLING_RELAY_PIN 13  
+    #define COOLING_THRESHOLD 5.0  // Default cooling threshold (Celsius)
+    #define COOLING_HYSTERESIS 0.5  // Hysteresis for cooling
+    
+    // Fan system settings
+    #define FAN_RELAY_PIN 12  
+    #define FAN_THRESHOLD 2.0  // Default fan threshold (Celsius)
+    #define FAN_HYSTERESIS 1.0  // Hysteresis for fan control
+    
+    // External fan system settings
+    #define EXTERNAL_FAN_RELAY_PIN 14  
+    #define EXTERNAL_FAN_THRESHOLD 27.0  // Default threshold for external fan (Celsius)
+    
+    // Device information for Home Assistant MQTT Discovery
+    #define DEVICE_IDENTIFIERS <your_ID>
+    #define DEVICE_MODEL "Kegerator Controller ESP32"
+    #define DEVICE_MANUFACTURER "Dan Hajduk"
+    
+    // Other pins
+    #define DOOR_SENSOR_PIN 5
+    #define POWER_RELAY 27  
+    
+    #endif  // CONFIG_H
+
    ```
 
 ### Running the System

@@ -1,122 +1,80 @@
 
 # Kegerator Control Unit
 
-This project is a custom Kegerator control system, which monitors temperature, fan, cooling status, and door sensor. It uses an ESP32 microcontroller and DallasTemperature sensors to manage the cooling system and fan within a kegerator. 
+This project is a custom **Kegerator Control System**, designed to manage temperature, cooling, fan, and door monitoring for a kegerator. Built on an **ESP32 microcontroller**, it uses **DallasTemperature sensors** to automate the cooling process and log real-time data via **Telnet**. The system is also capable of **Over-the-Air (OTA)** updates for remote firmware management.
 
 ## Features
-- Monitors inside and outside temperature using DallasTemperature sensors.
-- Automatic cooling control based on temperature set points.
-- Fan control based on set thresholds.
-- Door sensor monitoring with automatic cooling and fan shutdown if the door is left open.
-- Logging and real-time feedback through Telnet.
-- Non-blocking temperature readings and task management using FreeRTOS.
+- **Temperature Monitoring:** Tracks both inside and outside kegerator temperatures using DS18B20 sensors.
+- **Automated Cooling Control:** Dynamically adjusts cooling based on set temperature points.
+- **Fan Control:** Automatically activates based on temperature thresholds.
+- **Door Monitoring:** Detects door status and shuts down cooling/fan systems if the door is left open.
+- **Telnet Logging:** Provides real-time feedback and control through a Telnet interface.
+- **Non-blocking Temperature Readings:** Employs **FreeRTOS** for task management and non-blocking I/O.
+- **OTA Updates:** Supports Over-the-Air updates to upgrade firmware without manual intervention.
 
 ## Components
-1. **ESP32**: Microcontroller for managing sensors and controlling the system.
-2. **DallasTemperature Sensors**: DS18B20 sensors for monitoring inside and outside kegerator temperatures.
-3. **Relays**: Used to control the cooling and fan systems.
-4. **Door Sensor**: Monitors the door state to control the system accordingly.
+1. **ESP32**: The microcontroller that manages sensors and controls the cooling/fan system.
+2. **DallasTemperature Sensors**: DS18B20 sensors that monitor the inside and outside temperatures of the kegerator.
+3. **Relays**: Used to control the cooling and fan systems based on temperature and door status.
+4. **Door Sensor**: Monitors the door's state to prevent unnecessary cooling/fan operation if left open.
 
 ## Files and Structure
-- **config.h**: Configuration file for pin definitions, sensor addresses, and threshold settings.
-- **control.cpp & control.h**: Core logic for temperature monitoring, fan and cooling control, and door sensor management.
-- **utils.cpp & utils.h**: Utility functions, including Telnet communications and message logging.
-- **ota.cpp & ota.h**: Over-the-Air (OTA) updates functionality.
-- **Kegeretor_control_unit.ino**: The main file for Arduino, orchestrating the initialization and task execution.
-  
+- **config.h**: Configuration file for pin definitions, sensor addresses, and system thresholds.
+- **control.cpp & control.h**: Core logic for temperature monitoring, cooling/fan control, and door management.
+- **utils.cpp & utils.h**: Utility functions for Telnet communication and logging.
+- **ota.cpp & ota.h**: Implements Over-the-Air (OTA) updates functionality.
+- **Kegeretor_control_unit.ino**: The main Arduino sketch that initializes and orchestrates all system components.
+
 ## Setup and Installation
 
 ### Hardware Setup
-1. Connect the **DS18B20 temperature sensors** to the ESP32, using the OneWire protocol.
-2. Use relays to control the **cooling system** and **fan**.
-3. Connect the **door sensor** to monitor the state of the kegerator door.
+1. Connect the **DS18B20 temperature sensors** to the ESP32 using the OneWire protocol.
+2. Wire relays to control the **cooling system** and **fan**.
+3. Attach a **door sensor** to monitor the state of the kegerator door.
 
 ### Software Setup
 1. Clone this repository:
    ```bash
    git clone https://github.com/danhajduk/Kegeretor_control_unit.git
    ```
-2. Add your WiFi credentials and temperature sensor addresses in the `secrets.h` file:
+
+2. Add your WiFi credentials and sensor addresses in the `secrets.h` file:
    ```cpp
-    #ifndef SECRETS_H
-    #define SECRETS_H
-    
-    // WiFi credentials
-    #define WIFI_SSID <ssid>
-    #define WIFI_PASSWORD <password>
-    
-    // MQTT settings
-    #define MQTT_USER <user>
-    #define MQTT_PASSWORD <password>
-    
-    #define OTA_PASSWORD <password>
-    
-    #endif
-
+   #ifndef SECRETS_H
+   #define SECRETS_H
+   
+   // WiFi credentials
+   #define WIFI_SSID "<your-ssid>"
+   #define WIFI_PASSWORD "<your-password>"
+   
+   // OTA settings
+   #define OTA_PASSWORD "<your-ota-password>"
+   
+   #endif
    ```
-3. Upload the code to your **ESP32** using Arduino IDE or PlatformIO.
 
-4. Set up the correct pins for your ESP32 in `config.h`:
+3. Modify pin settings in `config.h` according to your hardware setup:
    ```cpp
-    // Pin where the data line is connected for temperature sensors
-    #define ONE_WIRE_BUS 15  // Define OneWire bus pin for DS18B20 temperature sensors
-    
-    // Create a OneWire instance to communicate with OneWire devices
-    extern OneWire oneWire;
-    
-    // Pass OneWire reference to DallasTemperature library
-    extern DallasTemperature sensors;
-    
-    #define TELNET_PORT 23  // Standard Telnet port
-    
-    // MQTT settings
-    #define MQTT_SERVER <mwtt server>
-    #define MQTT_PORT 1883
-    #define MQTT_MAX_PACKET_SIZE 1024
-    
-    // MQTT discovery topic base
-    #define DISCOVERY_PREFIX "homeassistant"
-    #define DEVICE_NAME "kegerator"
-    #define DEVICE_FRIENDLY_NAME "Kegerator"
-    
-    // Cooling system settings
-    #define COOLING_RELAY_PIN 13  
-    #define COOLING_THRESHOLD 5.0  // Default cooling threshold (Celsius)
-    #define COOLING_HYSTERESIS 0.5  // Hysteresis for cooling
-    
-    // Fan system settings
-    #define FAN_RELAY_PIN 12  
-    #define FAN_THRESHOLD 2.0  // Default fan threshold (Celsius)
-    #define FAN_HYSTERESIS 1.0  // Hysteresis for fan control
-    
-    // External fan system settings
-    #define EXTERNAL_FAN_RELAY_PIN 14  
-    #define EXTERNAL_FAN_THRESHOLD 27.0  // Default threshold for external fan (Celsius)
-    
-    // Device information for Home Assistant MQTT Discovery
-    #define DEVICE_IDENTIFIERS <your_ID>
-    #define DEVICE_MODEL "Kegerator Controller ESP32"
-    #define DEVICE_MANUFACTURER "Dan Hajduk"
-    
-    // Other pins
-    #define DOOR_SENSOR_PIN 5
-    #define POWER_RELAY 27  
-    
-    #endif  // CONFIG_H
-
+   // Pin definitions
+   #define ONE_WIRE_BUS 15  // Pin for DS18B20 temperature sensors
+   #define COOLING_RELAY_PIN 13  // Pin for cooling system relay
+   #define FAN_RELAY_PIN 12  // Pin for fan system relay
+   #define DOOR_SENSOR_PIN 5  // Pin for door sensor
    ```
+
+4. Upload the code to your **ESP32** using **Arduino IDE** or **PlatformIO**.
 
 ### Running the System
-1. Once uploaded, the ESP32 will initialize and start monitoring the temperatures, controlling the fan, and the cooling system.
-2. Connect to the ESP32 via **Telnet** to monitor real-time logs and change settings (e.g., temperature set point).
+1. After uploading, the ESP32 will start monitoring the temperatures, controlling the fan, and managing the cooling system.
+2. Connect to the ESP32 via **Telnet** to view real-time logs and adjust settings (e.g., temperature set point).
 
 ### OTA (Over-the-Air) Updates
-You can perform OTA updates to the ESP32 using the defined OTA functionality in `ota.cpp` and `ota.h`.
+You can update the ESP32 firmware remotely using OTA functionality defined in `ota.cpp` and `ota.h`.
 
 ## Telnet Commands
-- **status**: Shows the current status of the system.
-- **setpoint <value>**: Sets a new cooling set point.
-- **cool**: Manually activate the cooling system.
-  
+- **status**: Displays the current system status.
+- **setpoint <value>**: Adjusts the cooling set point to a new value.
+- **cool**: Manually activates the cooling system.
+
 ## License
 This project is licensed under the MIT License.

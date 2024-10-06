@@ -3,20 +3,27 @@
 
 #include <Arduino.h>
 
-void updateNTPTask(void *parameter);
-String getCurrentTime();
-void initNTP();
+// NTP Functions
+void updateNTPTask(void *parameter);   // Function to update time via NTP
+String getCurrentTime();               // Function to get the current time as a string
+void initNTP();                        // Function to initialize NTP
 
-void connectToWiFi();    // Function to connect to WiFi
-void setupTelnet();      // Function to initialize the Telnet server
-void handleTelnet();     // Function to handle Telnet connections
-void setupSensors();     // Function to initialize DS18B20 sensors
+// WiFi and Telnet Functions
+void connectToWiFi();                  // Function to connect to WiFi
+void setupTelnet();                    // Function to initialize the Telnet server
+void handleTelnet();                   // Function to handle Telnet connections
 
-void printToTelnetErr(const String &msg);
-void printToTelnet(const String &msg);
-void printToTelnet(const char *msg);
-void printKegeratorStatus() ;
-void processTelnetCommand(const String &command);
+// Sensor Functions
+void setupSensors();                   // Function to initialize DS18B20 sensors
 
-void printDashboard();
-#endif
+// Telnet Messaging Functions
+void printToTelnetErr(const String &msg);   // Function to print an error message to Telnet
+void printToTelnet(const String &msg);      // Function to print a message to Telnet (String)
+void printToTelnet(const char *msg);        // Function to print a message to Telnet (char*)
+void printKegeratorStatus();                // Function to print the Kegerator's current status
+void processTelnetCommand(const String &command); // Function to process Telnet commands
+
+// Dashboard Functions
+void printDashboard();                 // Function to print the dashboard to Telnet
+
+#endif // UTILS_H

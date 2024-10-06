@@ -10,7 +10,6 @@
 WiFiServer telnetServer(TELNET_PORT);  // Create a Telnet server on the defined port
 WiFiClient telnetClient;  // Create a Telnet client
 
-
 const char* ntpServer = "pool.ntp.org";
 const long gmtOffset_sec = -28800;  // Offset for Pacific Standard Time (UTC -8 hours)
 const int daylightOffset_sec = 3600;  // Change for daylight savings if applicable
@@ -18,13 +17,30 @@ const int daylightOffset_sec = 3600;  // Change for daylight savings if applicab
 unsigned long lastNtpUpdateTime = 0;  // Track the last time the NTP update was performed
 unsigned long ntpUpdateInterval = 300000;  // 5 minutes (in milliseconds)
 
-// Function to initialize time from NTP server
+// Define the circular buffer and index
+String debugMSG[14];  // Circular buffer for storing debug messages
+int debugIndex = 0;   // Circular buffer index
+
+/**
+ * @brief Initializes the NTP (Network Time Protocol) server.
+ * 
+ * This function configures the time synchronization with the NTP server to 
+ * set the device’s local time based on the defined time zone and daylight 
+ * saving settings.
+ */
 void initNTP() {
     configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
     printToTelnet("NTP initialized.");
 }
 
-// Function to get the current time
+/**
+ * @brief Gets the current time as a formatted string.
+ * 
+ * This function retrieves the current local time using the NTP server 
+ * and formats it as a string in the format "MM-DD-YYYY HH:MM:SS".
+ * 
+ * @return String The current time as a string, or "N/A" if the time is not available.
+ */
 String getCurrentTime() {
     struct tm timeinfo;
     if (!getLocalTime(&timeinfo)) {
@@ -36,7 +52,14 @@ String getCurrentTime() {
     return String(timeStringBuff);  // Return current time as a string
 }
 
-// Task to update NTP time every 5 minutes
+/**
+ * @brief Task to update NTP time every 5 minutes.
+ * 
+ * This function runs as a background task, checking every 5 minutes if the time 
+ * needs to be updated from the NTP server, and updates the local time if necessary.
+ * 
+ * @param parameter A generic pointer passed for task creation (not used here).
+ */
 void updateNTPTask(void *parameter) {
     while (true) {
         unsigned long currentMillis = millis();
@@ -53,10 +76,13 @@ void updateNTPTask(void *parameter) {
     }
 }
 
-// Circular buffer for storing debug messages
-String debugMSG[14];
-int debugIndex = 0;  // Circular buffer index
-
+/**
+ * @brief Initializes the temperature sensors.
+ * 
+ * This function sets up and checks the connection of DS18B20 temperature 
+ * sensors. It reports whether the sensors inside and outside the Kegerator 
+ * are successfully detected.
+ */
 void setupSensors() {
     sensors.begin();  // Start the DS18B20 temperature sensors
 
@@ -74,6 +100,13 @@ void setupSensors() {
     }
 }
 
+/**
+ * @brief Connects the device to the WiFi network.
+ * 
+ * This function attempts to connect to the WiFi network using the credentials 
+ * provided in the `config.h` file. It continuously checks the connection status 
+ * until successful.
+ */
 void connectToWiFi() {
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);  // Start WiFi connection
 
@@ -86,13 +119,24 @@ void connectToWiFi() {
     // printToTelnet("IP Address: " + String(WiFi.localIP()));
 }
 
-// Setup the Telnet server
+/**
+ * @brief Initializes the Telnet server.
+ * 
+ * This function sets up the Telnet server on the specified port and starts 
+ * listening for incoming Telnet client connections.
+ */
 void setupTelnet() {
     telnetServer.begin();  // Start the Telnet server
     telnetServer.setNoDelay(true);  // Ensure data is sent without delay
     printToTelnet("Telnet server started on port " + String(TELNET_PORT));
 }
 
+/**
+ * @brief Handles the Telnet client connection and incoming commands.
+ * 
+ * This function checks for new Telnet client connections, processes incoming data 
+ * from the client, and handles commands such as status queries or set point updates.
+ */
 void handleTelnet() {
     static String commandBuffer = "";  // Buffer to store incoming commands
 
@@ -126,6 +170,15 @@ void handleTelnet() {
     }
 }
 
+/**
+ * @brief Processes incoming Telnet commands.
+ * 
+ * This function interprets and executes various Telnet commands such as 
+ * checking the status (`stat`), setting the cooling set point (`set`), or 
+ * manually activating the cooling system (`cool`).
+ * 
+ * @param command The command string received from the Telnet client.
+ */
 void processTelnetCommand(const String &command) {
     String trimmedCommand = command;
     trimmedCommand.trim();  // Remove leading and trailing whitespace
@@ -160,6 +213,15 @@ void processTelnetCommand(const String &command) {
     }
 }
 
+/**
+ * @brief Sends an error message to the Telnet client and logs it.
+ * 
+ * This function formats the error message with a red color (using ANSI codes) 
+ * and sends it to the Telnet client and serial monitor. The message is also 
+ * stored in a circular buffer for display in the dashboard.
+ * 
+ * @param msg The error message to be displayed.
+ */
 void printToTelnetErr(const String &msg) {
     String errMsg = "\033[31mERROR : \033[0m" + msg;
     debugMSG[debugIndex] = getCurrentTime() + "> " + errMsg;
@@ -169,6 +231,15 @@ void printToTelnetErr(const String &msg) {
     printDashboard();
 }
 
+/**
+ * @brief Sends a regular message to the Telnet client and logs it.
+ * 
+ * This function formats and sends a message to the Telnet client and serial 
+ * monitor. The message is also stored in a circular buffer for display in the 
+ * dashboard.
+ * 
+ * @param msg The message to be displayed.
+ */
 void printToTelnet(const String &msg) {
     debugMSG[debugIndex] = getCurrentTime() + "> " + msg;
     Serial.println(debugMSG[debugIndex]);
@@ -177,6 +248,14 @@ void printToTelnet(const String &msg) {
     printDashboard();
 }
 
+/**
+ * @brief Overloaded function to send a message to the Telnet client from a C-string.
+ * 
+ * Similar to the other `printToTelnet` function, but accepts a C-string 
+ * (char array) instead of a `String` object.
+ * 
+ * @param msg The C-string message to be displayed.
+ */
 void printToTelnet(const char* msg) {
     debugMSG[debugIndex] = getCurrentTime() + "> " + String(msg);
     Serial.println(debugMSG[debugIndex]);
@@ -185,10 +264,22 @@ void printToTelnet(const char* msg) {
     printDashboard();
 }
 
+/**
+ * @brief Displays the current status of the Kegerator system.
+ * 
+ * This function prints the current status of the Kegerator, including sensor 
+ * temperatures, cooling status, and other relevant information to the Telnet client.
+ */
 void printKegeratorStatus() {
     printDashboard();  // Call the function to print the dashboard
 }
 
+/**
+ * @brief Displays the dashboard on the Telnet client.
+ * 
+ * This function clears the Telnet client’s screen, prints various system status 
+ * values, and displays the last few debug messages stored in a circular buffer.
+ */
 void printDashboard() {
     // Clear the screen
     telnetClient.print("\033[2J");
@@ -209,12 +300,12 @@ void printDashboard() {
     // Display cooling status
     Stat = coolingOn ? "\033[32mON\033[0m" : "\033[31mOFF\033[0m";
     telnetClient.print("\033[5;1HCooling Status :" + Stat + "\n");
-    // Disply fan status
+    // Display fan status
     Stat = fanOn ? "\033[32mON\033[0m" : "\033[31mOFF\033[0m";
     telnetClient.print("\033[4;45HExternal Fan:   " + Stat + "\n");
     Stat = fanOn ? "\033[32mON\033[0m" : "\033[31mOFF\033[0m";
     telnetClient.print("\033[5;45HInternal Fan:   " + Stat + "\n");
-    // Dsiplay door status
+    // Display door status
     Stat = doorOpen ? "\033[31mOpen\033[0m" : "\033[32mClosed\033[0m";
     telnetClient.print("\033[3;45HDoor status :   " + Stat + "\n");
 

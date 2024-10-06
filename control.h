@@ -3,17 +3,17 @@
 
 #include <Arduino.h>  // Include Arduino library for String type and other utilities
 
-void setupControl();     // Function to initialize control logic
-void handleControl();    // Function to handle control logic (temperature, relays, etc.)
-
-// Function to update temperature readings in the background
-void temperatureTask(void *parameter);
+// Function declarations
+void setupControl();                         // Initialize control logic
+void handleControl();                        // Handle control logic (temperature, relays, etc.)
+void temperatureTask(void *parameter);       // Update temperature readings in the background
 void updateCoolingSetPoint(float newSetPoint);
 float calculateAverageTemp();
 
+// Global variable declarations
+extern bool doorOpen;                        // Tracks if the door is currently open
+extern unsigned long coolingOnDuration;      // Duration of the cooling being ON
+extern unsigned long coolingOffDuration;     // Duration of the cooling being OFF
+extern unsigned long lastCoolingOnTime;      // Timestamp of the last cooling ON event
 
-extern bool doorOpen;  // Tracks if the door is currently open
-extern unsigned long coolingOnDuration;   // How long the cooling was ON
-extern unsigned long coolingOffDuration;  // How long the cooling was OFF
-extern unsigned long lastCoolingOnTime;   // Time when cooling was last turned on
-#endif
+#endif  // CONTROL_H

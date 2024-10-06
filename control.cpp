@@ -22,38 +22,61 @@ TaskHandle_t temperatureTaskHandle;
 
 // Global variables for cooling control
 bool coolingOn = false;
-float coolingSetPoint = 4.0;  // Default set point for cooling (this will be overwritten by Preferences)
+float coolingSetPoint = 4.0;  // Default set point for cooling
 unsigned long lastCoolingOffTime = 0;  // Time when cooling was last turned off
 unsigned long lastCoolingOnTime = 0;   // Time when cooling was last turned on
 unsigned long coolingDelay = 180000;  // Define cooling delay as 3 minutes (180000 milliseconds)
 
-
-// Create a Preferences object
+// Preferences object
 Preferences preferences;
 
 // Global variables for door monitoring
-bool doorOpen = false;  // Tracks if the door is currently open
+bool doorOpen = false;
 unsigned long doorOpenedTime = 0;  // Time when the door was opened
-const unsigned long doorOpenCoolingThreshold = 60000;  // 60 seconds in milliseconds (for cooling)
-const unsigned long doorOpenFanThreshold = 30000;  // 30 seconds in milliseconds (for fan)
+const unsigned long doorOpenCoolingThreshold = 60000;  // 60 seconds (for cooling)
+const unsigned long doorOpenFanThreshold = 30000;  // 30 seconds (for fan)
 
+// Global variables for tracking on/off durations
+unsigned long coolingOnDuration = 0;   // How long the cooling was ON
+unsigned long coolingOffDuration = 0;  // How long the cooling was OFF
+
+// Global variable to track fan status
+bool fanOn = false;
+
+const int bufferSize = 120;  // Buffer to store 60 temperature readings (1 per minute for an hour)
+float insideTempBuffer[bufferSize];  // Array to store the inside temperature readings
+int bufferIndex = 0;  // Tracks the current position in the buffer
+bool bufferFilled = false;  // Tracks if the buffer has been filled with 60 values yet
+
+/**
+ * @brief Initializes the door sensor.
+ * 
+ * This function sets up the door sensor, configuring the pin mode 
+ * and reading the initial door state. The door sensor uses an input pull-up resistor.
+ */
 void setupDoorSensor() {
     pinMode(DOOR_SENSOR_PIN, INPUT_PULLUP);  // Assuming the sensor pulls the pin LOW when the door is open
     doorOpen = digitalRead(DOOR_SENSOR_PIN) == LOW;  // Set initial door state
     printToTelnet("Door sensor initialized.");
 }
 
+/**
+ * @brief Monitors the door state and controls cooling and fan based on the door status.
+ * 
+ * This function constantly checks the state of the door sensor and takes 
+ * appropriate action. If the door is open for too long, it will turn off the 
+ * fan and cooling system to prevent unnecessary energy consumption. It also logs 
+ * when the door is opened or closed, and how long it was open.
+ */
 void monitorDoor() {
     bool currentDoorState = digitalRead(DOOR_SENSOR_PIN) == HIGH;  // Read the current door state (LOW = closed, HIGH = open)
     
     if (currentDoorState != doorOpen) {
         // Door state has changed
         if (currentDoorState) {
-            // Door just opened
             doorOpenedTime = millis();  // Record the time when the door was opened
             printToTelnet("Door opened.");
         } else {
-            // Door just closed
             unsigned long doorOpenDuration = millis() - doorOpenedTime;  // Calculate how long the door was open
             printToTelnet("Door closed.");
             printToTelnet("Door was open for " + String(doorOpenDuration / 1000) + " seconds.");
@@ -81,6 +104,13 @@ void monitorDoor() {
     }
 }
 
+/**
+ * @brief Initializes control systems for cooling, fan, and door sensors.
+ * 
+ * This function sets up the relay pins for controlling the cooling and fan systems.
+ * It also initializes the temperature sensors and retrieves the saved cooling 
+ * set point from non-volatile storage (Preferences).
+ */
 void setupControl() {
     // Set pin modes for cooling and fan relays
     pinMode(COOLING_RELAY_PIN, OUTPUT);
@@ -115,10 +145,13 @@ void setupControl() {
     );
 }
 
-// Global variables for tracking on/off durations
-unsigned long coolingOnDuration = 0;   // How long the cooling was ON
-unsigned long coolingOffDuration = 0;  // How long the cooling was OFF
-
+/**
+ * @brief Controls the cooling system based on temperature readings and door status.
+ * 
+ * This function monitors the inside temperature and determines whether the cooling 
+ * system should be turned on or off. It also respects the cooling delay and turns 
+ * off the cooling if the door is open for too long.
+ */
 void cooling() {
     unsigned long currentMillis = millis();  // Get the current time
     if (insideTemp == DEVICE_DISCONNECTED_C) return;
@@ -148,16 +181,18 @@ void cooling() {
     }
 }
 
-// Global variable to track fan status
-bool fanOn = false;
-
-// Function to control the fan
+/**
+ * @brief Controls the fan based on temperature readings and door status.
+ * 
+ * This function manages the fan operation based on the temperature inside the Kegerator. 
+ * The fan will be turned on if the temperature exceeds the set point plus a threshold 
+ * and turned off when the temperature drops below the set point minus the threshold.
+ */
 void controlFan() {
     if (insideTemp == DEVICE_DISCONNECTED_C) return;
 
     // Turn the fan on if the inside temperature is higher than the cooling set point plus the threshold
     if (!doorOpen && insideTemp > (coolingSetPoint + FAN_THRESHOLD + FAN_HYSTERESIS) && !fanOn) {
-        
         digitalWrite(FAN_RELAY_PIN, LOW);  // Turn the fan ON
         fanOn = true;
         printToTelnet("Fan turned ON.");
@@ -170,20 +205,26 @@ void controlFan() {
     }
 }
 
-
+/**
+ * @brief Main control function that handles cooling, fan, and door monitoring.
+ * 
+ * This function is called repeatedly in the main loop. It manages the cooling, fan, 
+ * and door monitoring functionalities by calling the respective functions.
+ */
 void handleControl() {
     cooling();
     controlFan();
     monitorDoor();
-    
 }
 
-const int bufferSize = 120;  // Buffer to store 60 temperature readings (1 per minute for an hour)
-float insideTempBuffer[bufferSize];  // Array to store the inside temperature readings
-int bufferIndex = 0;  // Tracks the current position in the buffer
-bool bufferFilled = false;  // Tracks if the buffer has been filled with 60 values yet
-
-// Function to calculate the average temperature from the buffer
+/**
+ * @brief Calculates the average temperature from the temperature buffer.
+ * 
+ * This function calculates the average temperature using the temperature readings 
+ * stored in the buffer over a period of time (typically one hour).
+ * 
+ * @return float The calculated average temperature.
+ */
 float calculateAverageTemp() {
     float sum = 0.0;
     int count = bufferFilled ? bufferSize : bufferIndex;  // Use the full buffer if filled, otherwise use up to the current index
@@ -193,6 +234,15 @@ float calculateAverageTemp() {
     return (count > 0) ? (sum / count) : 0.0;
 }
 
+/**
+ * @brief Task that periodically reads temperature data and stores it in a buffer.
+ * 
+ * This FreeRTOS task periodically reads the temperature from the sensors. It retries 
+ * up to 3 times if a sensor read fails and logs any errors. The temperature data is 
+ * also stored in a buffer to allow for the calculation of the average temperature.
+ * 
+ * @param parameter A pointer to task parameters (unused in this case).
+ */
 void temperatureTask(void *parameter) {
     while (true) {
         bool validInsideTemp = false;
@@ -255,7 +305,14 @@ void temperatureTask(void *parameter) {
     }
 }
 
-// Function to update the cooling set point and store it in Preferences
+/**
+ * @brief Updates the cooling set point and saves it in non-volatile memory.
+ * 
+ * This function updates the cooling set point and stores the new value in 
+ * non-volatile memory (Preferences) so that it persists across device reboots.
+ * 
+ * @param newSetPoint The new cooling set point to be saved.
+ */
 void updateCoolingSetPoint(float newSetPoint) {
     coolingSetPoint = newSetPoint;
     preferences.putFloat("setPoint", coolingSetPoint);  // Save the new set point to Preferences

@@ -38,8 +38,21 @@ This project is a custom Kegerator control system, which monitors temperature, f
    ```
 2. Add your WiFi credentials and temperature sensor addresses in the `secrets.h` file:
    ```cpp
-   #define WIFI_SSID "YourWiFiSSID"
-   #define WIFI_PASSWORD "YourWiFiPassword"
+    #ifndef SECRETS_H
+    #define SECRETS_H
+    
+    // WiFi credentials
+    #define WIFI_SSID <ssid>
+    #define WIFI_PASSWORD <password>
+    
+    // MQTT settings
+    #define MQTT_USER <user>
+    #define MQTT_PASSWORD <password>
+    
+    #define OTA_PASSWORD <password>
+    
+    #endif
+
    ```
 3. Upload the code to your **ESP32** using Arduino IDE or PlatformIO.
 

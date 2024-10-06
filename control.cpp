@@ -1,0 +1,263 @@
+#include "control.h"
+#include "config.h"
+#include "utils.h"
+#include <Arduino.h>
+
+// Create a OneWire instance for temperature sensors
+OneWire oneWire(ONE_WIRE_BUS);
+
+// Pass the OneWire instance to DallasTemperature library
+DallasTemperature sensors(&oneWire);
+
+// Global variables for storing temperature readings
+float insideTemp = 0.0;
+float outsideTemp = 0.0;
+
+// Sensor addresses
+uint8_t sensor1Address[8] = {0x28, 0xCC, 0x3F, 0x6B, 0x00, 0x00, 0x00, 0x13};  // Inside Kegerator
+uint8_t sensor2Address[8] = {0x28, 0x77, 0xFA, 0x6A, 0x00, 0x00, 0x00, 0x93};  // Outside, Behind Kegerator
+
+// Task handler
+TaskHandle_t temperatureTaskHandle;
+
+// Global variables for cooling control
+bool coolingOn = false;
+float coolingSetPoint = 4.0;  // Default set point for cooling (this will be overwritten by Preferences)
+unsigned long lastCoolingOffTime = 0;  // Time when cooling was last turned off
+unsigned long lastCoolingOnTime = 0;   // Time when cooling was last turned on
+unsigned long coolingDelay = 180000;  // Define cooling delay as 3 minutes (180000 milliseconds)
+
+
+// Create a Preferences object
+Preferences preferences;
+
+// Global variables for door monitoring
+bool doorOpen = false;  // Tracks if the door is currently open
+unsigned long doorOpenedTime = 0;  // Time when the door was opened
+const unsigned long doorOpenCoolingThreshold = 60000;  // 60 seconds in milliseconds (for cooling)
+const unsigned long doorOpenFanThreshold = 30000;  // 30 seconds in milliseconds (for fan)
+
+void setupDoorSensor() {
+    pinMode(DOOR_SENSOR_PIN, INPUT_PULLUP);  // Assuming the sensor pulls the pin LOW when the door is open
+    doorOpen = digitalRead(DOOR_SENSOR_PIN) == LOW;  // Set initial door state
+    printToTelnet("Door sensor initialized.");
+}
+
+void monitorDoor() {
+    bool currentDoorState = digitalRead(DOOR_SENSOR_PIN) == HIGH;  // Read the current door state (LOW = closed, HIGH = open)
+    
+    if (currentDoorState != doorOpen) {
+        // Door state has changed
+        if (currentDoorState) {
+            // Door just opened
+            doorOpenedTime = millis();  // Record the time when the door was opened
+            printToTelnet("Door opened.");
+        } else {
+            // Door just closed
+            unsigned long doorOpenDuration = millis() - doorOpenedTime;  // Calculate how long the door was open
+            printToTelnet("Door closed.");
+            printToTelnet("Door was open for " + String(doorOpenDuration / 1000) + " seconds.");
+        }
+        doorOpen = currentDoorState;  // Update the door state
+    }
+
+    // If the door is open, check the duration
+    if (doorOpen) {
+        unsigned long currentOpenDuration = millis() - doorOpenedTime;
+
+        // Turn off the fan if the door has been open for more than 30 seconds
+        if (currentOpenDuration >= doorOpenFanThreshold && fanOn) {
+            digitalWrite(FAN_RELAY_PIN, HIGH);  // Turn the fan OFF
+            fanOn = false;
+            printToTelnet("Fan turned OFF due to door being open for more than 30 seconds.");
+        }
+
+        // Turn off the cooling if the door has been open for more than 60 seconds
+        if (currentOpenDuration >= doorOpenCoolingThreshold && coolingOn) {
+            digitalWrite(COOLING_RELAY_PIN, HIGH);  // Turn the cooling OFF
+            coolingOn = false;
+            printToTelnet("Cooling system deactivated due to door being open for more than 60 seconds.");
+        }
+    }
+}
+
+void setupControl() {
+    // Set pin modes for cooling and fan relays
+    pinMode(COOLING_RELAY_PIN, OUTPUT);
+    digitalWrite(COOLING_RELAY_PIN, HIGH);  // Start with cooling OFF
+    pinMode(FAN_RELAY_PIN, OUTPUT);
+    digitalWrite(FAN_RELAY_PIN, HIGH);  // Start with fan OFF
+    pinMode(EXTERNAL_FAN_RELAY_PIN, OUTPUT);
+    digitalWrite(EXTERNAL_FAN_RELAY_PIN, HIGH);  // Start with external fan OFF
+    pinMode(POWER_RELAY, OUTPUT);
+    digitalWrite(POWER_RELAY, HIGH);  // Start with power OFF
+
+    // Initialize the temperature sensors
+    sensors.begin();
+    printToTelnet("Temperature sensors initialized.");
+
+    // Initialize Preferences and retrieve the saved set point
+    preferences.begin("kegerator", false);  // Open namespace "kegerator" for read/write
+    coolingSetPoint = preferences.getFloat("setPoint", 4.0);  // Retrieve saved set point or default to 4.0°C
+    printToTelnet("Cooling set point loaded: " + String(coolingSetPoint) + " °C");
+
+    setupDoorSensor();
+    
+    // Create the task for temperature readings in parallel
+    xTaskCreatePinnedToCore(
+        temperatureTask,       // Task function
+        "TemperatureTask",     // Task name
+        4096,                  // Stack size (in bytes)
+        NULL,                  // Parameter
+        1,                     // Priority
+        &temperatureTaskHandle,// Task handle
+        0                      // Core number (0 or 1)
+    );
+}
+
+// Global variables for tracking on/off durations
+unsigned long coolingOnDuration = 0;   // How long the cooling was ON
+unsigned long coolingOffDuration = 0;  // How long the cooling was OFF
+
+void cooling() {
+    unsigned long currentMillis = millis();  // Get the current time
+    if (insideTemp == DEVICE_DISCONNECTED_C) return;
+
+    // Cooling logic: ensure door isn't open for more than the cooling threshold
+    if (!doorOpen && insideTemp >= (coolingSetPoint + COOLING_HYSTERESIS) && !coolingOn && (currentMillis - lastCoolingOffTime >= coolingDelay)) {
+        // Start cooling if inside temp is 0.5°C above the set point, cooling is off, and 3 minutes have passed since cooling was turned off
+        digitalWrite(COOLING_RELAY_PIN, LOW);  // Activate the cooling system
+        coolingOn = true;
+        lastCoolingOnTime = millis();  // Track the time cooling was turned on
+        
+        // Calculate how long the cooling system was OFF
+        coolingOffDuration = lastCoolingOnTime - lastCoolingOffTime;  // Calculate off duration
+        printToTelnet("Cooling system activated.");
+        printToTelnet("Cooling was OFF for: " + String(coolingOffDuration / 1000) + " seconds.");
+    } 
+    else if (insideTemp <= (coolingSetPoint - COOLING_HYSTERESIS) && coolingOn) {
+        // Stop cooling if inside temp is 0.5°C below the set point and cooling is on
+        digitalWrite(COOLING_RELAY_PIN, HIGH);  // Deactivate the cooling system
+        coolingOn = false;
+        lastCoolingOffTime = millis();  // Record the time cooling was turned off
+        
+        // Calculate how long the cooling system was ON
+        coolingOnDuration = lastCoolingOffTime - lastCoolingOnTime;  // Calculate on duration
+        printToTelnet("Cooling system deactivated.");
+        printToTelnet("Cooling was ON for: " + String(coolingOnDuration / 1000) + " seconds.");
+    }
+}
+
+// Global variable to track fan status
+bool fanOn = false;
+
+// Function to control the fan
+void controlFan() {
+    if (insideTemp == DEVICE_DISCONNECTED_C) return;
+
+    // Turn the fan on if the inside temperature is higher than the cooling set point plus the threshold
+    if (!doorOpen && insideTemp > (coolingSetPoint + FAN_THRESHOLD + FAN_HYSTERESIS) && !fanOn) {
+        
+        digitalWrite(FAN_RELAY_PIN, LOW);  // Turn the fan ON
+        fanOn = true;
+        printToTelnet("Fan turned ON.");
+    }
+    // Turn the fan off if the inside temperature is lower than the cooling set point minus the threshold
+    else if (insideTemp < (coolingSetPoint + FAN_THRESHOLD - FAN_HYSTERESIS) && fanOn) {
+        digitalWrite(FAN_RELAY_PIN, HIGH);  // Turn the fan OFF
+        fanOn = false;
+        printToTelnet("Fan turned OFF.");
+    }
+}
+
+
+void handleControl() {
+    cooling();
+    controlFan();
+    monitorDoor();
+    
+}
+
+const int bufferSize = 120;  // Buffer to store 60 temperature readings (1 per minute for an hour)
+float insideTempBuffer[bufferSize];  // Array to store the inside temperature readings
+int bufferIndex = 0;  // Tracks the current position in the buffer
+bool bufferFilled = false;  // Tracks if the buffer has been filled with 60 values yet
+
+// Function to calculate the average temperature from the buffer
+float calculateAverageTemp() {
+    float sum = 0.0;
+    int count = bufferFilled ? bufferSize : bufferIndex;  // Use the full buffer if filled, otherwise use up to the current index
+    for (int i = 0; i < count; i++) {
+        sum += insideTempBuffer[i];
+    }
+    return (count > 0) ? (sum / count) : 0.0;
+}
+
+void temperatureTask(void *parameter) {
+    while (true) {
+        bool validInsideTemp = false;
+        bool validOutsideTemp = false;
+
+        // Retry up to 3 times for inside and outside temperature readings
+        for (int retry = 0; retry < 3; retry++) {
+            // Request temperature readings from all sensors
+            sensors.requestTemperatures();
+            vTaskDelay(750 / portTICK_PERIOD_MS);  // Wait for the sensor reading
+            
+            insideTemp = sensors.getTempC(sensor1Address);
+            outsideTemp = sensors.getTempC(sensor2Address);
+
+            if (insideTemp != DEVICE_DISCONNECTED_C) {
+                validInsideTemp = true;
+                break;  // Exit loop if we get a valid reading
+            }
+        }
+
+        for (int retry = 0; retry < 3; retry++) {
+            if (outsideTemp != DEVICE_DISCONNECTED_C) {
+                validOutsideTemp = true;
+                break;  // Exit loop if we get a valid reading
+            }
+        }
+
+        // Check if inside temperature is valid after 3 retries
+        if (!validInsideTemp) {
+            printToTelnetErr("Inside sensor disconnected or not found after 3 retries!");
+        } else {
+            printToTelnet("Inside Temp: " + String(insideTemp) + " °C");
+
+            // Store the inside temperature in the buffer
+            insideTempBuffer[bufferIndex] = insideTemp;
+            bufferIndex++;
+
+            // If we fill the buffer, wrap the index around (circular buffer behavior)
+            if (bufferIndex >= bufferSize) {
+                bufferIndex = 0;
+                bufferFilled = true;
+            }
+        }
+
+        // Check if outside temperature is valid after 3 retries
+        if (!validOutsideTemp) {
+            printToTelnetErr("Outside sensor disconnected or not found after 3 retries!");
+        } else {
+            printToTelnet("Outside Temp: " + String(outsideTemp) + " °C");
+        }
+
+        // Calculate and print the average temperature after the buffer has been filled
+        if (bufferFilled) {
+            float avgTemp = calculateAverageTemp();
+            printToTelnet("Average Inside Temp (Last Hour): " + String(avgTemp) + " °C");
+        }
+
+        // Delay the task for 20 seconds (non-blocking delay in FreeRTOS)
+        vTaskDelay(20000 / portTICK_PERIOD_MS);
+    }
+}
+
+// Function to update the cooling set point and store it in Preferences
+void updateCoolingSetPoint(float newSetPoint) {
+    coolingSetPoint = newSetPoint;
+    preferences.putFloat("setPoint", coolingSetPoint);  // Save the new set point to Preferences
+    printToTelnet("Cooling set point updated: " + String(coolingSetPoint) + " °C");
+}

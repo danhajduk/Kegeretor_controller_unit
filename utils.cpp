@@ -160,7 +160,7 @@ void handleTelnet() {
             Serial.write(c);  // Echo Telnet input to Serial
 
             // Add received characters to the command buffer
-            if (c == '\n' || c == '\r') {
+            if (c == '\n') {
                 processTelnetCommand(commandBuffer);  // Process the command
                 commandBuffer = "";  // Clear buffer after processing
             } else {
@@ -199,11 +199,18 @@ void processTelnetCommand(const String &command) {
     else if (trimmedCommand.equalsIgnoreCase("cool")) {
         // Manually trigger the cooling system
         if (!coolingOn) {
-            digitalWrite(COOLING_RELAY_PIN, LOW);  // Activate cooling
-            coolingOn = true;
+            activateCooling();
             printToTelnet("Cooling system manually activated.");
         } else {
             printToTelnet("Cooling is already ON.");
+        }
+    }
+    else if (trimmedCommand.equalsIgnoreCase("cooloff")) {
+        // Manually trigger the cooling system
+        if (!coolingOn) {
+            deactivateCooling("manually");
+        } else {
+            printToTelnet("Cooling is already OFF.");
         }
     }
     else {
@@ -227,7 +234,7 @@ void printToTelnetErr(const String &msg) {
     debugMSG[debugIndex] = getCurrentTime() + "> " + errMsg;
     Serial.println(debugMSG[debugIndex]);
     // telnetClient.println(debugMSG[debugIndex]);
-    debugIndex = (debugIndex + 1) % 10;  // Update debugIndex, looping it within the array bounds
+    debugIndex = (debugIndex + 1) % 14;  // Update debugIndex, looping it within the array bounds
     printDashboard();
 }
 
@@ -244,7 +251,7 @@ void printToTelnet(const String &msg) {
     debugMSG[debugIndex] = getCurrentTime() + "> " + msg;
     Serial.println(debugMSG[debugIndex]);
     // telnetClient.println(debugMSG[debugIndex]);
-    debugIndex = (debugIndex + 1) % 10;  // Update debugIndex, looping it within the array bounds
+    debugIndex = (debugIndex + 1) % 14;  // Update debugIndex, looping it within the array bounds
     printDashboard();
 }
 
@@ -260,7 +267,7 @@ void printToTelnet(const char* msg) {
     debugMSG[debugIndex] = getCurrentTime() + "> " + String(msg);
     Serial.println(debugMSG[debugIndex]);
     // telnetClient.println(debugMSG[debugIndex]);
-    debugIndex = (debugIndex + 1) % 10;  // Update debugIndex, looping it within the array bounds
+    debugIndex = (debugIndex + 1) % 14;  // Update debugIndex, looping it within the array bounds
     printDashboard();
 }
 
@@ -332,7 +339,7 @@ void printDashboard() {
 
     // Display last 10 debug messages from the circular buffer
     for (int i = 0; i < 14; i++) {
-        int msgIndex = (debugIndex + i) % 10;  // Get message index from the buffer
+        int msgIndex = (debugIndex + i) % 14;  // Get message index from the buffer
         telnetClient.print("\033[" + String(10 + i) + ";1H" + debugMSG[msgIndex] + "\n");
     }
 

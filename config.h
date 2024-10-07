@@ -53,11 +53,13 @@ extern WiFiClient telnetClient;     // Telnet client object
 // Cooling System Configuration
 #define COOLING_THRESHOLD 5.0       // Temperature threshold for cooling (in Celsius)
 #define COOLING_HYSTERESIS 0.5      // Hysteresis for cooling control (prevents rapid toggling)
+#define TURN_ON 0
+#define TURN_OFF 1
 
 // Fan System Configuration
 #define FAN_THRESHOLD 2.0           // Temperature threshold for fan control (in Celsius)
 #define FAN_HYSTERESIS 1.0          // Hysteresis for fan control
-
+  
 // External Fan System Configuration
 #define EXTERNAL_FAN_THRESHOLD 27.0 // Threshold for external fan (in Celsius)
 

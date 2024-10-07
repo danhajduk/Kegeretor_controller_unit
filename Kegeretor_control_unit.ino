@@ -7,11 +7,10 @@
 // Initializes the system, sets up network connectivity, OTA updates, control logic, etc.
 void setup() {
     Serial.begin(115200); // Start serial communication at 115200 baud rate for debugging
-    Serial.println("Starting setup ...");
+    printToTelnet("Starting setup ...");
 
     connectToWiFi();  // Connect to WiFi network
     initNTP();        // Initialize Network Time Protocol (NTP) for time synchronization
-    Serial.println("Debug"); // Debug message to confirm setup has reached this point
 
     setupOTA(DEVICE_NAME); // Setup OTA updates (useful for remote firmware updates)
     setupTelnet();         // Setup Telnet for remote debugging and monitoring
@@ -20,7 +19,7 @@ void setup() {
     printToTelnet("Kegerator Control System started."); // Log message to Telnet
 
     // Ensure the power relay is initially ON (LOW may represent ON state)
-    digitalWrite(POWER_RELAY, LOW); 
+    digitalWrite(POWER_RELAY, TURN_ON); 
 
     // Create a FreeRTOS task to periodically update time from NTP server
     // This task runs on core 0 of the ESP32.

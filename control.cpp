@@ -49,6 +49,18 @@ int bufferIndex = 0;  // Tracks the current position in the buffer
 bool bufferFilled = false;  // Tracks if the buffer has been filled with 60 values yet
 
 /**
+ * @brief Main control function that handles cooling, fan, and door monitoring.
+ * 
+ * This function is called repeatedly in the main loop. It manages the cooling, fan, 
+ * and door monitoring functionalities by calling the respective functions.
+ */
+void handleControl() {
+    cooling();
+    controlFan();
+    monitorDoor();
+}
+
+/**
  * @brief Initializes the door sensor.
  * 
  * This function sets up the door sensor, configuring the pin mode 
@@ -90,16 +102,14 @@ void monitorDoor() {
 
         // Turn off the fan if the door has been open for more than 30 seconds
         if (currentOpenDuration >= doorOpenFanThreshold && fanOn) {
-            digitalWrite(FAN_RELAY_PIN, HIGH);  // Turn the fan OFF
+            digitalWrite(FAN_RELAY_PIN, TURN_OFF);  // Turn the fan OFF
             fanOn = false;
             printToTelnet("Fan turned OFF due to door being open for more than 30 seconds.");
         }
 
         // Turn off the cooling if the door has been open for more than 60 seconds
         if (currentOpenDuration >= doorOpenCoolingThreshold && coolingOn) {
-            digitalWrite(COOLING_RELAY_PIN, HIGH);  // Turn the cooling OFF
-            coolingOn = false;
-            printToTelnet("Cooling system deactivated due to door being open for more than 60 seconds.");
+            deactivateCooling("door open for more than 60 seconds");  // Use the new deactivateCooling function
         }
     }
 }
@@ -114,13 +124,13 @@ void monitorDoor() {
 void setupControl() {
     // Set pin modes for cooling and fan relays
     pinMode(COOLING_RELAY_PIN, OUTPUT);
-    digitalWrite(COOLING_RELAY_PIN, HIGH);  // Start with cooling OFF
+    digitalWrite(COOLING_RELAY_PIN, TURN_OFF);  // Start with cooling OFF
     pinMode(FAN_RELAY_PIN, OUTPUT);
-    digitalWrite(FAN_RELAY_PIN, HIGH);  // Start with fan OFF
+    digitalWrite(FAN_RELAY_PIN, TURN_OFF);  // Start with fan OFF
     pinMode(EXTERNAL_FAN_RELAY_PIN, OUTPUT);
-    digitalWrite(EXTERNAL_FAN_RELAY_PIN, HIGH);  // Start with external fan OFF
+    digitalWrite(EXTERNAL_FAN_RELAY_PIN, TURN_OFF);  // Start with external fan OFF
     pinMode(POWER_RELAY, OUTPUT);
-    digitalWrite(POWER_RELAY, HIGH);  // Start with power OFF
+    digitalWrite(POWER_RELAY, TURN_OFF);  // Start with power OFF
 
     // Initialize the temperature sensors
     sensors.begin();
@@ -146,38 +156,79 @@ void setupControl() {
 }
 
 /**
+ * @brief Turns the cooling system on and logs the activation time.
+ */
+void activateCooling() {
+    digitalWrite(COOLING_RELAY_PIN, TURN_ON);  // Activate the cooling system
+    coolingOn = true;
+    lastCoolingOnTime = millis();  // Track the time cooling was turned on
+    printToTelnet("Cooling system activated.");
+    printToTelnet("Cooling was OFF for: " + String(coolingOffDuration / 1000) + " seconds.");
+}
+
+/**
+ * @brief Turns the cooling system off and logs the deactivation time.
+ * 
+ * @param reason Reason for deactivation (e.g., reached set point, max time limit)
+ */
+void deactivateCooling(const String& reason) {
+    digitalWrite(COOLING_RELAY_PIN, TURN_OFF);  // Deactivate the cooling system
+    coolingOn = false;
+    lastCoolingOffTime = millis();  // Record the time cooling was turned off
+
+    // Calculate how long the cooling system was ON
+    coolingOnDuration = lastCoolingOffTime - lastCoolingOnTime;  // Calculate on duration
+    printToTelnet("Cooling system deactivated (" + reason + ").");
+    printToTelnet("Cooling was ON for: " + String(coolingOnDuration / 1000) + " seconds.");
+}
+
+/**
+ * @brief Checks if the cooling system has been on for too long (2 hours).
+ */
+bool isCoolingOnTooLong() {
+    return (coolingOn && (millis() - lastCoolingOnTime >= 7200000));  // 7200000 ms = 2 hours
+}
+
+/**
+ * @brief Determines if cooling should be activated based on temperature.
+ */
+bool shouldActivateCooling() {
+    unsigned long currentMillis = millis();
+    return (!doorOpen && insideTemp >= (coolingSetPoint + COOLING_HYSTERESIS) && 
+            !coolingOn && (currentMillis - lastCoolingOffTime >= coolingDelay));
+}
+
+/**
+ * @brief Determines if cooling should be deactivated based on reaching the set point.
+ */
+bool shouldDeactivateCooling() {
+    return (insideTemp <= (coolingSetPoint - COOLING_HYSTERESIS) && coolingOn);
+}
+
+/**
  * @brief Controls the cooling system based on temperature readings and door status.
  * 
  * This function monitors the inside temperature and determines whether the cooling 
  * system should be turned on or off. It also respects the cooling delay and turns 
- * off the cooling if the door is open for too long.
+ * off the cooling if it has been running for more than 2 hours or if the set point is reached.
  */
 void cooling() {
-    unsigned long currentMillis = millis();  // Get the current time
-    if (insideTemp == DEVICE_DISCONNECTED_C) return;
+    if (insideTemp == DEVICE_DISCONNECTED_C) return;  // No valid temperature reading
 
-    // Cooling logic: ensure door isn't open for more than the cooling threshold
-    if (!doorOpen && insideTemp >= (coolingSetPoint + COOLING_HYSTERESIS) && !coolingOn && (currentMillis - lastCoolingOffTime >= coolingDelay)) {
-        // Start cooling if inside temp is 0.5°C above the set point, cooling is off, and 3 minutes have passed since cooling was turned off
-        digitalWrite(COOLING_RELAY_PIN, LOW);  // Activate the cooling system
-        coolingOn = true;
-        lastCoolingOnTime = millis();  // Track the time cooling was turned on
-        
-        // Calculate how long the cooling system was OFF
-        coolingOffDuration = lastCoolingOnTime - lastCoolingOffTime;  // Calculate off duration
-        printToTelnet("Cooling system activated.");
-        printToTelnet("Cooling was OFF for: " + String(coolingOffDuration / 1000) + " seconds.");
-    } 
-    else if (insideTemp <= (coolingSetPoint - COOLING_HYSTERESIS) && coolingOn) {
-        // Stop cooling if inside temp is 0.5°C below the set point and cooling is on
-        digitalWrite(COOLING_RELAY_PIN, HIGH);  // Deactivate the cooling system
-        coolingOn = false;
-        lastCoolingOffTime = millis();  // Record the time cooling was turned off
-        
-        // Calculate how long the cooling system was ON
-        coolingOnDuration = lastCoolingOffTime - lastCoolingOnTime;  // Calculate on duration
-        printToTelnet("Cooling system deactivated.");
-        printToTelnet("Cooling was ON for: " + String(coolingOnDuration / 1000) + " seconds.");
+    // Turn off cooling if it's been on for too long (2 hours)
+    if (isCoolingOnTooLong()) {
+        deactivateCooling("it was on for more than 2 hours");
+        return;
+    }
+
+    // Turn on cooling if needed (based on temperature and delay)
+    if (shouldActivateCooling()) {
+        activateCooling();
+    }
+
+    // Turn off cooling if the temperature is below the set point
+    if (shouldDeactivateCooling()) {
+        deactivateCooling("Reached set point");
     }
 }
 
@@ -193,28 +244,16 @@ void controlFan() {
 
     // Turn the fan on if the inside temperature is higher than the cooling set point plus the threshold
     if (!doorOpen && insideTemp > (coolingSetPoint + FAN_THRESHOLD + FAN_HYSTERESIS) && !fanOn) {
-        digitalWrite(FAN_RELAY_PIN, LOW);  // Turn the fan ON
+        digitalWrite(FAN_RELAY_PIN, TURN_ON);  // Turn the fan ON
         fanOn = true;
         printToTelnet("Fan turned ON.");
     }
     // Turn the fan off if the inside temperature is lower than the cooling set point minus the threshold
     else if (insideTemp < (coolingSetPoint + FAN_THRESHOLD - FAN_HYSTERESIS) && fanOn) {
-        digitalWrite(FAN_RELAY_PIN, HIGH);  // Turn the fan OFF
+        digitalWrite(FAN_RELAY_PIN, TURN_OFF);  // Turn the fan OFF
         fanOn = false;
         printToTelnet("Fan turned OFF.");
     }
-}
-
-/**
- * @brief Main control function that handles cooling, fan, and door monitoring.
- * 
- * This function is called repeatedly in the main loop. It manages the cooling, fan, 
- * and door monitoring functionalities by calling the respective functions.
- */
-void handleControl() {
-    cooling();
-    controlFan();
-    monitorDoor();
 }
 
 /**
@@ -274,7 +313,7 @@ void temperatureTask(void *parameter) {
         if (!validInsideTemp) {
             printToTelnetErr("Inside sensor disconnected or not found after 3 retries!");
         } else {
-            printToTelnet("Inside Temp: " + String(insideTemp) + " °C");
+            // printToTelnet("Inside Temp: " + String(insideTemp) + " °C");
 
             // Store the inside temperature in the buffer
             insideTempBuffer[bufferIndex] = insideTemp;
@@ -289,9 +328,9 @@ void temperatureTask(void *parameter) {
 
         // Check if outside temperature is valid after 3 retries
         if (!validOutsideTemp) {
-            printToTelnetErr("Outside sensor disconnected or not found after 3 retries!");
+            // printToTelnetErr("Outside sensor disconnected or not found after 3 retries!");
         } else {
-            printToTelnet("Outside Temp: " + String(outsideTemp) + " °C");
+            // printToTelnet("Outside Temp: " + String(outsideTemp) + " °C");
         }
 
         // Calculate and print the average temperature after the buffer has been filled

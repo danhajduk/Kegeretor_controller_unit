@@ -26,4 +26,6 @@ void processTelnetCommand(const String &command); // Function to process Telnet 
 // Dashboard Functions
 void printDashboard();                 // Function to print the dashboard to Telnet
 
+String formatTime(unsigned long seconds); 
+
 #endif // UTILS_H

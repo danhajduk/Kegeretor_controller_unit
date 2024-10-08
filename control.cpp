@@ -2,6 +2,7 @@
 #include "config.h"
 #include "utils.h"
 #include <Arduino.h>
+#include "time.h"
 
 // Create a OneWire instance for temperature sensors
 OneWire oneWire(ONE_WIRE_BUS);
@@ -12,6 +13,12 @@ DallasTemperature sensors(&oneWire);
 // Global variables for storing temperature readings
 float insideTemp = 0.0;
 float outsideTemp = 0.0;
+
+int invalidInsideTempCount = 0;       // Counter for consecutive invalid inside temperature readings
+int invalidOutsideTempCount = 0;      // Counter for consecutive invalid outside temperature readings
+
+unsigned long lastInsideRecheckTime = 0;  // Last time inside sensor was rechecked
+unsigned long lastOutsideRecheckTime = 0; // Last time outside sensor was rechecked
 
 // Sensor addresses
 uint8_t sensor1Address[8] = {0x28, 0xCC, 0x3F, 0x6B, 0x00, 0x00, 0x00, 0x13};  // Inside Kegerator
@@ -48,6 +55,9 @@ float insideTempBuffer[bufferSize];  // Array to store the inside temperature re
 int bufferIndex = 0;  // Tracks the current position in the buffer
 bool bufferFilled = false;  // Tracks if the buffer has been filled with 60 values yet
 
+unsigned long lastCrushCheck = 0;  // Keeps track of the last time monitorCrush was called
+const unsigned long crushCheckInterval = 20000;  // 20 seconds in milliseconds
+
 /**
  * @brief Main control function that handles cooling, fan, and door monitoring.
  * 
@@ -55,9 +65,17 @@ bool bufferFilled = false;  // Tracks if the buffer has been filled with 60 valu
  * and door monitoring functionalities by calling the respective functions.
  */
 void handleControl() {
-    cooling();
-    controlFan();
-    monitorDoor();
+    cooling();         // Handle cooling logic
+    controlFan();      // Handle fan control logic
+    monitorDoor();     // Monitor door sensor and manage door-related logic
+
+    // Check if 20 seconds have passed since the last time we called monitorCrush()
+    unsigned long currentMillis = millis();
+    if (currentMillis - lastCrushCheck >= crushCheckInterval) {
+        monitorCrush();                  // Call the crush monitoring function
+        lastCrushCheck = currentMillis;  // Update the last time it was called
+        printDashboard();
+    }
 }
 
 /**
@@ -140,6 +158,8 @@ void setupControl() {
     preferences.begin("kegerator", false);  // Open namespace "kegerator" for read/write
     coolingSetPoint = preferences.getFloat("setPoint", 4.0);  // Retrieve saved set point or default to 4.0°C
     printToTelnet("Cooling set point loaded: " + String(coolingSetPoint) + " °C");
+    preferences.putBool("in_sens_avail", true);  // Mark inside sensor as available
+    preferences.putBool("out_sens_avail", true);  // Mark inside sensor as available
 
     setupDoorSensor();
     
@@ -162,6 +182,7 @@ void activateCooling() {
     digitalWrite(COOLING_RELAY_PIN, TURN_ON);  // Activate the cooling system
     coolingOn = true;
     lastCoolingOnTime = millis();  // Track the time cooling was turned on
+    coolingOffDuration = lastCoolingOnTime - lastCoolingOffTime;
     printToTelnet("Cooling system activated.");
     printToTelnet("Cooling was OFF for: " + String(coolingOffDuration / 1000) + " seconds.");
 }
@@ -217,7 +238,7 @@ void cooling() {
 
     // Turn off cooling if it's been on for too long (2 hours)
     if (isCoolingOnTooLong()) {
-        deactivateCooling("it was on for more than 2 hours");
+        deactivateCooling("it was ON for more than 2 hours");
         return;
     }
 
@@ -273,48 +294,94 @@ float calculateAverageTemp() {
     return (count > 0) ? (sum / count) : 0.0;
 }
 
+
+
 /**
- * @brief Task that periodically reads temperature data and stores it in a buffer.
+ * @brief Task that periodically reads temperature data, validates sensors, and manages availability.
  * 
- * This FreeRTOS task periodically reads the temperature from the sensors. It retries 
- * up to 3 times if a sensor read fails and logs any errors. The temperature data is 
- * also stored in a buffer to allow for the calculation of the average temperature.
+ * This FreeRTOS task performs the following:
+ * 1. Reads temperatures from inside and outside sensors up to 3 times if valid readings are not obtained.
+ * 2. Validates the temperature readings for being within a specified range.
+ * 3. Keeps track of consecutive invalid readings and disables a sensor after 5 invalid attempts.
+ * 4. Rechecks unavailable sensors every 5 minutes to see if they become available again.
+ * 5. Updates sensor availability status in Preferences for persistence across reboots.
+ * 6. Prints relevant status messages to the Telnet client and logs errors for invalid sensor readings.
  * 
- * @param parameter A pointer to task parameters (unused in this case).
+ * @param parameter A pointer passed to the task (not used here).
  */
 void temperatureTask(void *parameter) {
+
     while (true) {
+        // Retrieve the initial sensor availability from Preferences
+        bool insideSensorAvailable = preferences.getBool("in_sens_avail", true);
+        bool outsideSensorAvailable = preferences.getBool("out_sens_avail", true);
         bool validInsideTemp = false;
         bool validOutsideTemp = false;
 
-        // Retry up to 3 times for inside and outside temperature readings
-        for (int retry = 0; retry < 3; retry++) {
-            // Request temperature readings from all sensors
-            sensors.requestTemperatures();
-            vTaskDelay(750 / portTICK_PERIOD_MS);  // Wait for the sensor reading
-            
-            insideTemp = sensors.getTempC(sensor1Address);
-            outsideTemp = sensors.getTempC(sensor2Address);
+        // Get the current time in milliseconds
+        unsigned long currentMillis = millis();
 
-            if (insideTemp != DEVICE_DISCONNECTED_C) {
-                validInsideTemp = true;
-                break;  // Exit loop if we get a valid reading
+        // Retry reading inside temperature if the sensor is available or if recheck interval has passed
+        if (insideSensorAvailable || (currentMillis - lastInsideRecheckTime >= RECHECK_INTERVAL)) {
+            for (int retry = 0; retry < 3; retry++) {
+                // Request temperature readings from all sensors
+                sensors.requestTemperatures();
+                vTaskDelay(750 / portTICK_PERIOD_MS);  // Wait for the sensor reading
+                
+                insideTemp = sensors.getTempC(sensor1Address);
+
+                // Check if inside temperature is within the valid range
+                if (insideTemp != DEVICE_DISCONNECTED_C &&
+                    insideTemp >= MIN_VALID_TEMP &&
+                    insideTemp <= MAX_INSIDE_TEMP) {
+                    validInsideTemp = true;
+                    break;  // Exit loop if we get a valid reading
+                }
+            }
+
+            // If the inside sensor is unavailable, update the last recheck time
+            if (!insideSensorAvailable) {
+                lastInsideRecheckTime = currentMillis;
             }
         }
 
-        for (int retry = 0; retry < 3; retry++) {
-            if (outsideTemp != DEVICE_DISCONNECTED_C) {
-                validOutsideTemp = true;
-                break;  // Exit loop if we get a valid reading
+        // Retry reading outside temperature if the sensor is available or if recheck interval has passed
+        if (outsideSensorAvailable || (currentMillis - lastOutsideRecheckTime >= RECHECK_INTERVAL)) {
+            for (int retry = 0; retry < 3; retry++) {
+                outsideTemp = sensors.getTempC(sensor2Address);
+
+                // Check if outside temperature is within the valid range
+                if (outsideTemp != DEVICE_DISCONNECTED_C &&
+                    outsideTemp >= MIN_VALID_TEMP &&
+                    outsideTemp <= MAX_OUTSIDE_TEMP) {
+                    validOutsideTemp = true;
+                    break;  // Exit loop if we get a valid reading
+                }
+            }
+
+            // If the outside sensor is unavailable, update the last recheck time
+            if (!outsideSensorAvailable) {
+                lastOutsideRecheckTime = currentMillis;
             }
         }
 
-        // Check if inside temperature is valid after 3 retries
+        // Handle inside sensor validity and availability
         if (!validInsideTemp) {
-            printToTelnetErr("Inside sensor disconnected or not found after 3 retries!");
+            invalidInsideTempCount++;
+            printToTelnetErr("Inside sensor invalid (" + String(invalidInsideTempCount) + "/5)");
+            
+            if (invalidInsideTempCount >= MAX_INVALID_RETRIES && validInsideTemp) {
+                insideSensorAvailable = false;
+                preferences.putBool("in_sens_avail", insideSensorAvailable);  // Mark inside sensor as unavailable
+                printToTelnetErr("Inside sensor marked as unavailable.");
+            }
         } else {
-            // printToTelnet("Inside Temp: " + String(insideTemp) + " °C");
-
+            invalidInsideTempCount = 0;  // Reset counter on valid reading
+            if (!insideSensorAvailable) {
+                insideSensorAvailable = true;
+                preferences.putBool("in_sens_avail", insideSensorAvailable);  // Mark sensor as available
+                printToTelnet("Inside sensor marked as available again.");
+            }
             // Store the inside temperature in the buffer
             insideTempBuffer[bufferIndex] = insideTemp;
             bufferIndex++;
@@ -324,20 +391,28 @@ void temperatureTask(void *parameter) {
                 bufferIndex = 0;
                 bufferFilled = true;
             }
+
         }
 
-        // Check if outside temperature is valid after 3 retries
+        // Handle outside sensor validity and availability
         if (!validOutsideTemp) {
-            // printToTelnetErr("Outside sensor disconnected or not found after 3 retries!");
+            invalidOutsideTempCount++;
+            if (outsideSensorAvailable) printToTelnetErr("Outside sensor invalid (" + String(invalidOutsideTempCount) + "/5)");
+            
+            if (invalidOutsideTempCount >= MAX_INVALID_RETRIES && outsideSensorAvailable) {
+                outsideSensorAvailable = false;
+                preferences.putBool("out_sens_avail", outsideSensorAvailable);  // Mark outside sensor as unavailable
+                printToTelnetErr("Outside sensor marked as unavailable.");
+            }
         } else {
-            // printToTelnet("Outside Temp: " + String(outsideTemp) + " °C");
+            invalidOutsideTempCount = 0;  // Reset counter on valid reading
+            if (!outsideSensorAvailable) {
+                outsideSensorAvailable = true;
+                preferences.putBool("out_sens_avail", outsideSensorAvailable);  // Mark sensor as available
+                printToTelnet("Outside sensor marked as available again.");
+            }
         }
 
-        // Calculate and print the average temperature after the buffer has been filled
-        if (bufferFilled) {
-            float avgTemp = calculateAverageTemp();
-            printToTelnet("Average Inside Temp (Last Hour): " + String(avgTemp) + " °C");
-        }
 
         // Delay the task for 20 seconds (non-blocking delay in FreeRTOS)
         vTaskDelay(20000 / portTICK_PERIOD_MS);
@@ -356,4 +431,171 @@ void updateCoolingSetPoint(float newSetPoint) {
     coolingSetPoint = newSetPoint;
     preferences.putFloat("setPoint", coolingSetPoint);  // Save the new set point to Preferences
     printToTelnet("Cooling set point updated: " + String(coolingSetPoint) + " °C");
+}
+
+/**
+ * @brief Sets up the cold crush process with the specified temperature and time.
+ * 
+ * This function stores the crush temperature and duration, saves the current 
+ * cooling set point, and updates the cooling set point to the crush temperature.
+ * 
+ * @param temp The temperature to maintain during the crush process (in °C).
+ *             It must be greater than or equal to 1°C.
+ * @param time The duration for the crush process (in hours).
+ *             It must be greater than zero.
+ */
+void setupCrush(float temp, int time) {
+    preferences.begin("kegerator", false);  // Open preferences namespace for read/write
+    // Validate parameters (temperature must be >= 1°C and time must be > 0 hours)
+    if (temp < 1) {
+        printToTelnetErr("Invalid temperature: Must be 1°C or higher.");
+        return;  // Exit the function if the temperature is invalid
+    }
+    if (time <= 0) {
+        printToTelnetErr("Invalid time: Must be greater than zero.");
+        return;  // Exit the function if the time is invalid
+    }
+
+    // Store crush settings in preferences
+    preferences.putFloat("crush_temp", temp);          // Store crush temperature
+    preferences.putInt("crush_time", time);            // Store crush duration (in hours)
+    preferences.putBool("crush_setup", true);          // Flag: crush setup initiated
+    preferences.putBool("crush_started", false);       // Flag: crush process hasn't started
+
+    // Store the current cooling set point (save the original temp)
+    float currentSetPoint = coolingSetPoint;           // Retrieve current cooling set point
+    printToTelnet("Current cooling set point: " + String(currentSetPoint) + " °C");
+    preferences.putFloat("original_temp", currentSetPoint);  // Store original set point
+
+    preferences.putFloat("original_temp", currentSetPoint);  // Store original set point
+    float storedSetPoint = preferences.getFloat("original_temp", -1.0);
+    printToTelnet("Stored original cooling set point: " + String(storedSetPoint) + " °C");
+
+    // Update the cooling set point to the crush temperature
+    updateCoolingSetPoint(temp);                       // Set the cooling point to the crush temperature
+
+    // Feedback to Telnet
+    printToTelnet("Crush setup initiated.");
+    printToTelnet("Target temperature: " + String(temp) + " °C for " + String(time) + " hours.");
+    printToTelnet("Original cooling set point: " + String(currentSetPoint) + " °C saved.");
+//    printCrushPreferences();
+}
+
+/**
+ * @brief Monitors the cold crush process to ensure the target temperature is reached
+ *        and checks if the crush process has completed based on the end time.
+ * 
+ * This function checks two things:
+ * 1. If the current temperature has reached or gone below the specified crush temperature.
+ *    Once the temperature is reached, it stores the start time and calculates the end time.
+ * 2. If the current time has passed the crush end time, it restores the original cooling 
+ *    set point and marks the crush process as completed.
+ */
+void monitorCrush() {
+    // Retrieve the crush parameters and status from preferences
+    float crushTemp = preferences.getFloat("crush_temp", 0.0);
+    int crushTime = preferences.getInt("crush_time", 0);  // Duration in hours
+    bool crushSetup = preferences.getBool("crush_setup", false);
+    bool crushStarted = preferences.getBool("crush_started", false);
+
+    // Retrieve the original cooling set point and crush end timestamp
+    float originalSetPoint = preferences.getFloat("original_temp", coolingSetPoint);
+    time_t crushEndTime = preferences.getULong("crush_end_time", 0);  // Retrieve the end time as a timestamp
+
+    // Get the current time as a `time_t` object (seconds since epoch)
+    time_t currentTime;
+    time(&currentTime);
+
+    // If the crush process hasn't started but the setup is in progress
+    if (crushSetup && !crushStarted) {
+        if (insideTemp <= crushTemp) {
+            // Calculate the end time by adding the crush duration (in hours, converted to seconds)
+            crushEndTime = currentTime + (crushTime * 3600);  // Add hours to current time in seconds
+
+            // Store the start and end times as timestamps in Preferences
+            preferences.putULong("crush_time", currentTime);   // Store the start time as a timestamp
+            preferences.putULong("crush_end_time", crushEndTime);    // Store the end time as a timestamp
+
+            // Mark the crush process as started
+            preferences.putBool("crush_started", true);
+            preferences.putBool("crush_setup", false);  // Crush setup is complete
+
+            // Provide feedback via Telnet with formatted times
+            printToTelnet("Crush temperature of " + String(crushTemp) + " °C reached.");
+            printToTelnet("Crush started at: " + String(ctime(&currentTime)));  // Convert start time to readable format
+            printToTelnet("Crush will end at: " + String(ctime(&crushEndTime)));  // Convert end time to readable format
+        } else {
+            printToTelnet("Crush setting up... Current temp: " + String(insideTemp) + " °C. Target: " + String(crushTemp) + " °C.");
+        }
+    }
+
+    // If the crush process has started, monitor its completion
+    if (crushStarted) {
+        // Check if the current time has passed the crush end time
+        if (currentTime >= crushEndTime) {
+            // Restore the original cooling set point
+            updateCoolingSetPoint(originalSetPoint);
+
+            // Mark the crush process as complete
+            preferences.putBool("crush_started", false);  // Mark crush as finished
+
+            // Provide feedback via Telnet
+            printToTelnet("Crush process complete.");
+            printToTelnet("Cooling set point restored to: " + String(originalSetPoint) + " °C.");
+        } else {
+            // Provide status update if the process is still running
+            printToTelnet("Crush in progress. End time: " + String(ctime(&crushEndTime)));
+        }
+    }
+}
+
+/**
+ * @brief Converts a Unix timestamp (time_t) to a formatted string in "MM/DD/YYYY HH:MM" format.
+ * 
+ * @param timestamp The Unix timestamp to be converted.
+ * @return String The formatted date and time as a string.
+ */
+String convertTimestampToDateTime(time_t timestamp) {
+    struct tm *timeinfo = localtime(&timestamp);  // Convert timestamp to local time
+    char buffer[20];  // Buffer to hold the formatted date and time string
+    
+    // Format the time into "MM/DD/YYYY HH:MM"
+    strftime(buffer, sizeof(buffer), "%m/%d/%Y %H:%M", timeinfo);
+
+    return String(buffer);  // Return the formatted string
+}
+
+/**
+ * @brief Pulls all crush-related preferences and prints them to the Telnet client.
+ * 
+ * This function retrieves the crush temperature, crush time, original cooling set point, 
+ * crush start time, and crush end time from Preferences, then prints the values to the Telnet client.
+ */
+void printCrushPreferences() {
+    float crushTemp = preferences.getFloat("crush_temp", 0.0);
+    int crushTime = preferences.getInt("crush_time", 0);
+    bool crushSetup = preferences.getBool("crush_setup", false);
+    bool crushStarted = preferences.getBool("crush_started", false);
+    float originalSetPoint = preferences.getFloat("original_temp", 0.0);
+    time_t crushStartTime = preferences.getULong("crush_time", 0);
+    time_t crushEndTime = preferences.getULong("crush_end_time", 0);
+
+    printToTelnet("Crush Preferences:");
+    printToTelnet("  Crush Temp: " + String(crushTemp, 2) + " °C");
+    printToTelnet("  Crush Time: " + String(crushTime) + " hours");
+    printToTelnet("  Crush Setup: " + String(crushSetup ? "True" : "False"));
+    printToTelnet("  Crush Started: " + String(crushStarted ? "True" : "False"));
+    printToTelnet("  Original Cooling Set Point: " + String(originalSetPoint, 2) + " °C");
+
+    if (crushStartTime != 0) {
+        printToTelnet("  Crush Start Time: " + String(ctime(&crushStartTime)));
+    } else {
+        printToTelnet("  Crush Start Time: N/A");
+    }
+
+    if (crushEndTime != 0) {
+        printToTelnet("  Crush End Time: " + String(ctime(&crushEndTime)));
+    } else {
+        printToTelnet("  Crush End Time: N/A");
+    }
 }

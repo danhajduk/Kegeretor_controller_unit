@@ -2,6 +2,8 @@
 #include "utils.h"     // Utility functions (WiFi, time sync, etc.)
 #include "control.h"   // Control logic for sensors and relays
 #include "config.h"    // Configuration file for constants and settings
+#include "mqtt.h"
+
 
 // Function: setup()
 // Initializes the system, sets up network connectivity, OTA updates, control logic, etc.
@@ -49,6 +51,10 @@ void setup() {
         0                 // Core number
     );
     printToTelnet("NTP Update Task created.");
+    // Setup mqtt with homeassistant auto discovery 
+    setupMQTT();
+    publishDiscoveryConfig();
+
 }
 
 // Global variable to track last status
@@ -60,4 +66,6 @@ void loop() {
     ArduinoOTA.handle();  // Handle Over-the-Air updates
     handleTelnet();       // Process Telnet commands for remote debugging
     handleControl();      // Main control loop for managing temperature, relays, etc.
+    handleMQTT();         // handle MQTT MQTT loop and ensures the connection stays alive.
+    
 }

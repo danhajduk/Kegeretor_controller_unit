@@ -34,6 +34,14 @@ unsigned long lastCoolingOffTime = 0;  // Time when cooling was last turned off
 unsigned long lastCoolingOnTime = 0;   // Time when cooling was last turned on
 unsigned long coolingDelay = 180000;  // Define cooling delay as 3 minutes (180000 milliseconds)
 
+// Global variables for skewed activation and deactivation points
+float skewedActivationPoint;
+float skewedDeactivationPoint;
+
+// Global variable to store the last time the skewed points were updated.
+unsigned long lastSkewUpdateTime = 0;
+const unsigned long skewUpdateInterval = 300000; // 10 minutes in milliseconds
+
 // Preferences object
 Preferences preferences;
 
@@ -59,6 +67,59 @@ unsigned long lastCrushCheck = 0;  // Keeps track of the last time monitorCrush 
 const unsigned long crushCheckInterval = 20000;  // 20 seconds in milliseconds
 
 /**
+ * @brief Initializes the skewed points based on the set point.
+ * 
+ * This should be called during setup or whenever the cooling set point is changed.
+ */
+void initializeSkewedPoints(float setPoint) {
+    skewedActivationPoint = setPoint + COOLING_HYSTERESIS;
+    skewedDeactivationPoint = setPoint - COOLING_HYSTERESIS;
+    printToTelnet("Initial Skewed Activation Point: " + String(skewedActivationPoint) + " °C");
+    printToTelnet("Initial Skewed Deactivation Point: " + String(skewedDeactivationPoint) + " °C");
+}
+
+/**
+ * @brief Updates the skewed activation and deactivation points based on the deviation.
+ * 
+ * This function adjusts the skewed points by adding/subtracting a calculated deviation
+ * derived from the difference between the average temperature and the set point.
+ * 
+ * @param setPoint The target set point for cooling.
+ * @param avgTemp The average temperature of the buffer.
+ * @param skewFactor The factor to apply for the skewing.
+ */
+void updateSkewedPoints(float setPoint, float avgTemp, float skewFactor = SKEW_FACTOR) {
+    // Get the current time
+    unsigned long currentMillis = millis();
+
+    // Ensure a minimum interval between updates
+    if (currentMillis - lastSkewUpdateTime < skewUpdateInterval) {
+        return; // Skip the update if the interval hasn't elapsed
+    }
+    // Update the last time the skew points were adjusted
+    lastSkewUpdateTime = currentMillis;
+
+    // Calculate the deviation between average temperature and set point
+    float deviation = avgTemp - setPoint;
+
+    // Only adjust if the deviation is greater than a small threshold (e.g., 0.1°C)
+    if (abs(deviation) > 0.05) {
+        // Adjust the skewed points based on the deviation.
+        skewedActivationPoint -= skewFactor * deviation;
+        skewedDeactivationPoint -= skewFactor * deviation;
+
+        printToTelnet("Updated Skewed Activation Point: " + String(skewedActivationPoint) + " °C ");
+        printToTelnet("Updated Skewed Deactivation Point: " + String(skewedDeactivationPoint) + " °C");
+
+    } else {
+        printToTelnet("Deviation too small for skew adjustment: " + String(deviation) + " °C.");
+        printToTelnet("Activation Point: " + String(skewedActivationPoint) + " °C" + 
+                      "Deactivation Point: " + String(skewedDeactivationPoint) + " °C");
+
+    }
+}
+
+/**
  * @brief Main control function that handles cooling, fan, and door monitoring.
  * 
  * This function is called repeatedly in the main loop. It manages the cooling, fan, 
@@ -68,6 +129,10 @@ void handleControl() {
     cooling();         // Handle cooling logic
     controlFan();      // Handle fan control logic
     monitorDoor();     // Monitor door sensor and manage door-related logic
+
+    // Calculate the average temperature periodically and update skewed points if needed
+    float avgTemp = calculateAverageTemp();
+    updateSkewedPoints(coolingSetPoint, avgTemp);
 
     // Check if 20 seconds have passed since the last time we called monitorCrush()
     unsigned long currentMillis = millis();
@@ -98,36 +163,37 @@ void setupDoorSensor() {
  * fan and cooling system to prevent unnecessary energy consumption. It also logs 
  * when the door is opened or closed, and how long it was open.
  */
+
 void monitorDoor() {
-    bool currentDoorState = digitalRead(DOOR_SENSOR_PIN) == HIGH;  // Read the current door state (LOW = closed, HIGH = open)
-    
+    bool currentDoorState = digitalRead(DOOR_SENSOR_PIN) == HIGH;
+
     if (currentDoorState != doorOpen) {
-        // Door state has changed
+        unsigned long currentMillis = millis();
         if (currentDoorState) {
-            doorOpenedTime = millis();  // Record the time when the door was opened
+            doorOpenedTime = currentMillis;
             printToTelnet("Door opened.");
         } else {
-            unsigned long doorOpenDuration = millis() - doorOpenedTime;  // Calculate how long the door was open
+            unsigned long doorOpenDuration = currentMillis - doorOpenedTime;
             printToTelnet("Door closed.");
             printToTelnet("Door was open for " + String(doorOpenDuration / 1000) + " seconds.");
+
+            if (doorOpenDuration < doorOpenCoolingThreshold) {
+                printToTelnet("Short door open event detected. Resuming normal operation.");
+            }
         }
-        doorOpen = currentDoorState;  // Update the door state
+        doorOpen = currentDoorState;
     }
 
-    // If the door is open, check the duration
+    // If the door is open, check the duration for fan and cooling control
     if (doorOpen) {
         unsigned long currentOpenDuration = millis() - doorOpenedTime;
-
-        // Turn off the fan if the door has been open for more than 30 seconds
         if (currentOpenDuration >= doorOpenFanThreshold && fanOn) {
-            digitalWrite(FAN_RELAY_PIN, TURN_OFF);  // Turn the fan OFF
+            digitalWrite(FAN_RELAY_PIN, TURN_OFF);
             fanOn = false;
             printToTelnet("Fan turned OFF due to door being open for more than 30 seconds.");
         }
-
-        // Turn off the cooling if the door has been open for more than 60 seconds
         if (currentOpenDuration >= doorOpenCoolingThreshold && coolingOn) {
-            deactivateCooling("door open for more than 60 seconds");  // Use the new deactivateCooling function
+            deactivateCooling("door open for more than 60 seconds");
         }
     }
 }
@@ -149,6 +215,7 @@ void setupControl() {
     digitalWrite(EXTERNAL_FAN_RELAY_PIN, TURN_OFF);  // Start with external fan OFF
     pinMode(POWER_RELAY, OUTPUT);
     digitalWrite(POWER_RELAY, TURN_OFF);  // Start with power OFF
+    printToTelnet("I/O pins setup completed");
 
     // Initialize the temperature sensors
     sensors.begin();
@@ -160,6 +227,7 @@ void setupControl() {
     printToTelnet("Cooling set point loaded: " + String(coolingSetPoint) + " °C");
     preferences.putBool("in_sens_avail", true);  // Mark inside sensor as available
     preferences.putBool("out_sens_avail", true);  // Mark inside sensor as available
+    initializeSkewedPoints(coolingSetPoint);  // Initialize the skewed points.
 
     setupDoorSensor();
     
@@ -173,6 +241,7 @@ void setupControl() {
         &temperatureTaskHandle,// Task handle
         0                      // Core number (0 or 1)
     );
+    printToTelnet("Temperature reading task created");
 }
 
 /**
@@ -211,19 +280,24 @@ bool isCoolingOnTooLong() {
 }
 
 /**
- * @brief Determines if cooling should be activated based on temperature.
+ * @brief Determines if cooling should be activated with skewed thresholds.
+ * 
+ * Uses the calculated average temperature to adjust the cooling threshold,
+ * skewing the cooling set point dynamically.
  */
 bool shouldActivateCooling() {
-    unsigned long currentMillis = millis();
-    return (!doorOpen && insideTemp >= (coolingSetPoint + COOLING_HYSTERESIS) && 
-            !coolingOn && (currentMillis - lastCoolingOffTime >= coolingDelay));
+    return (!doorOpen && insideTemp >= skewedActivationPoint && !coolingOn &&
+            (millis() - lastCoolingOffTime >= coolingDelay));
 }
 
 /**
- * @brief Determines if cooling should be deactivated based on reaching the set point.
+ * @brief Determines if cooling should be deactivated with skewed thresholds.
+ * 
+ * Uses the calculated average temperature to adjust the cooling threshold,
+ * skewing the cooling set point dynamically.
  */
 bool shouldDeactivateCooling() {
-    return (insideTemp <= (coolingSetPoint - COOLING_HYSTERESIS) && coolingOn);
+    return (insideTemp <= skewedDeactivationPoint && coolingOn);
 }
 
 /**
@@ -297,125 +371,133 @@ float calculateAverageTemp() {
 
 
 /**
- * @brief Task that periodically reads temperature data, validates sensors, and manages availability.
+ * @brief Reads temperature from a given sensor and checks its validity.
  * 
- * This FreeRTOS task performs the following:
- * 1. Reads temperatures from inside and outside sensors up to 3 times if valid readings are not obtained.
- * 2. Validates the temperature readings for being within a specified range.
- * 3. Keeps track of consecutive invalid readings and disables a sensor after 5 invalid attempts.
- * 4. Rechecks unavailable sensors every 5 minutes to see if they become available again.
- * 5. Updates sensor availability status in Preferences for persistence across reboots.
- * 6. Prints relevant status messages to the Telnet client and logs errors for invalid sensor readings.
+ * @param address The sensor address.
+ * @param temp Reference to store the read temperature.
+ * @param minTemp Minimum valid temperature.
+ * @param maxTemp Maximum valid temperature.
+ * @return bool True if the temperature is valid, otherwise false.
+ */
+bool readTemperature(uint8_t* address, float& temp, float minTemp, float maxTemp) {
+    for (int retry = 0; retry < 3; retry++) {
+        sensors.requestTemperatures();
+        vTaskDelay(750 / portTICK_PERIOD_MS);  // Wait for the sensor reading
+        temp = sensors.getTempC(address);
+        
+        if (temp != DEVICE_DISCONNECTED_C && temp >= minTemp && temp <= maxTemp) {
+            return true;  // Valid temperature reading
+        }
+    }
+    return false;  // Invalid temperature after retries
+}
+
+/**
+ * @brief Updates sensor availability based on validity and logs changes.
+ * If the temperature reading is invalid, it keeps the last valid reading.
+ * Only writes to EEPROM if the value changes to avoid unnecessary writes.
+ * 
+ * @param validTemp Indicates if the sensor has a valid reading.
+ * @param sensorAvailable Reference to the sensor availability status.
+ * @param sensorType A string identifier for the sensor (e.g., "inside" or "outside").
+ * @param lastValidTemp The last valid temperature reading to retain if the current reading is invalid.
+ * @param currentTemp Reference to the variable storing the current temperature.
+ */
+void updateSensorAvailability(bool validTemp, bool& sensorAvailable, const char* sensorType, float lastValidTemp, float& currentTemp) {
+    String key = String(sensorType) + "_sens_avail";
+    bool previousState = preferences.getBool(key.c_str(), true); // Retrieve the previously stored value
+
+    if (!validTemp) {
+        sensorAvailable = false;
+        printToTelnetErr(String(sensorType) + " sensor marked as unavailable. Keeping last valid reading: " + String(lastValidTemp) + " °C.");
+        currentTemp = lastValidTemp; // Retain the last valid reading
+        
+        // Only write to preferences if the value has changed
+        if (previousState != sensorAvailable) {
+            preferences.putBool(key.c_str(), sensorAvailable);
+        }
+    } else {
+        sensorAvailable = true;        
+        // Only write to preferences if the value has changed
+        if (previousState != sensorAvailable) {
+            preferences.putBool(key.c_str(), sensorAvailable);
+            printToTelnet(String(sensorType) + " sensor marked as available again.");
+        }
+    }
+}
+
+/**
+ * @brief Updates the temperature buffer for averaging purposes.
+ * Checks for outliers before adding the new reading to maintain stability.
+ * 
+ * @param newTemp The new temperature reading to add to the buffer.
+ */
+void updateTemperatureBuffer(float newTemp) {
+    if (newTemp >= MIN_VALID_TEMP && newTemp <= MAX_INSIDE_TEMP) {
+        insideTempBuffer[bufferIndex] = newTemp;
+        bufferIndex = (bufferIndex + 1) % bufferSize;
+        bufferFilled = bufferFilled || (bufferIndex == 0);
+    } else {
+        printToTelnetErr("Skipped outlier temperature reading: " + String(newTemp) + " °C.");
+    }
+}
+
+/**
+ * @brief Task that periodically reads temperature data, validates sensors, and manages availability.
+ *  Use previous valid reading if the current one is invalid.
+ *  Adjust delay time for more frequent checks when issues are detected.
  * 
  * @param parameter A pointer passed to the task (not used here).
  */
 void temperatureTask(void *parameter) {
+  int inSensorCounter = 0;
+  int outSensorCounter = 0;
+  int inSesnsorTimer = 0;
+  int outSensorTimer = 0;
+  float previousReading = DEVICE_DISCONNECTED_C;
 
     while (true) {
-        // Retrieve the initial sensor availability from Preferences
+        // Retrieve initial sensor availability from Preferences
         bool insideSensorAvailable = preferences.getBool("in_sens_avail", true);
         bool outsideSensorAvailable = preferences.getBool("out_sens_avail", true);
-        bool validInsideTemp = false;
-        bool validOutsideTemp = false;
 
-        // Get the current time in milliseconds
-        unsigned long currentMillis = millis();
+        int now = millis();
 
-        // Retry reading inside temperature if the sensor is available or if recheck interval has passed
-        if (insideSensorAvailable || (currentMillis - lastInsideRecheckTime >= RECHECK_INTERVAL)) {
-            for (int retry = 0; retry < 3; retry++) {
-                // Request temperature readings from all sensors
-                sensors.requestTemperatures();
-                vTaskDelay(750 / portTICK_PERIOD_MS);  // Wait for the sensor reading
-                
-                insideTemp = sensors.getTempC(sensor1Address);
+        if (inSensorCounter < MAX_INVALID_RETRIES || now - inSesnsorTimer > RECHECK_INTERVAL) {
+            inSesnsorTimer = now; // Reset the timer
+            previousReading = insideTemp;
+            // Read and validate inside temperature
+            bool validInsideTemp = insideSensorAvailable 
+                ? readTemperature(sensor1Address, insideTemp, MIN_VALID_TEMP, MAX_INSIDE_TEMP)
+                : false;
 
-                // Check if inside temperature is within the valid range
-                if (insideTemp != DEVICE_DISCONNECTED_C &&
-                    insideTemp >= MIN_VALID_TEMP &&
-                    insideTemp <= MAX_INSIDE_TEMP) {
-                    validInsideTemp = true;
-                    break;  // Exit loop if we get a valid reading
-                }
-            }
+            // Update inside sensor availability with last known valid inside temperature
+            updateSensorAvailability(validInsideTemp, insideSensorAvailable, "inside", previousReading, insideTemp);
+            if (validInsideTemp) {
+                updateTemperatureBuffer(insideTemp);
+                inSensorCounter = 0;
+            } else inSensorCounter ++;
+        } else insideTemp = DEVICE_DISCONNECTED_C;
 
-            // If the inside sensor is unavailable, update the last recheck time
-            if (!insideSensorAvailable) {
-                lastInsideRecheckTime = currentMillis;
-            }
-        }
+        previousReading = DEVICE_DISCONNECTED_C;
 
-        // Retry reading outside temperature if the sensor is available or if recheck interval has passed
-        if (outsideSensorAvailable || (currentMillis - lastOutsideRecheckTime >= RECHECK_INTERVAL)) {
-            for (int retry = 0; retry < 3; retry++) {
-                outsideTemp = sensors.getTempC(sensor2Address);
-
-                // Check if outside temperature is within the valid range
-                if (outsideTemp != DEVICE_DISCONNECTED_C &&
-                    outsideTemp >= MIN_VALID_TEMP &&
-                    outsideTemp <= MAX_OUTSIDE_TEMP) {
-                    validOutsideTemp = true;
-                    break;  // Exit loop if we get a valid reading
-                }
-            }
-
-            // If the outside sensor is unavailable, update the last recheck time
-            if (!outsideSensorAvailable) {
-                lastOutsideRecheckTime = currentMillis;
-            }
-        }
-
-        // Handle inside sensor validity and availability
-        if (!validInsideTemp) {
-            invalidInsideTempCount++;
-            printToTelnetErr("Inside sensor invalid (" + String(invalidInsideTempCount) + "/5)");
-            
-            if (invalidInsideTempCount >= MAX_INVALID_RETRIES && validInsideTemp) {
-                insideSensorAvailable = false;
-                preferences.putBool("in_sens_avail", insideSensorAvailable);  // Mark inside sensor as unavailable
-                printToTelnetErr("Inside sensor marked as unavailable.");
-            }
-        } else {
-            invalidInsideTempCount = 0;  // Reset counter on valid reading
-            if (!insideSensorAvailable) {
-                insideSensorAvailable = true;
-                preferences.putBool("in_sens_avail", insideSensorAvailable);  // Mark sensor as available
-                printToTelnet("Inside sensor marked as available again.");
-            }
-            // Store the inside temperature in the buffer
-            insideTempBuffer[bufferIndex] = insideTemp;
-            bufferIndex++;
-
-            // If we fill the buffer, wrap the index around (circular buffer behavior)
-            if (bufferIndex >= bufferSize) {
-                bufferIndex = 0;
-                bufferFilled = true;
-            }
-
-        }
-
-        // Handle outside sensor validity and availability
-        if (!validOutsideTemp) {
-            invalidOutsideTempCount++;
-            if (outsideSensorAvailable) printToTelnetErr("Outside sensor invalid (" + String(invalidOutsideTempCount) + "/5)");
-            
-            if (invalidOutsideTempCount >= MAX_INVALID_RETRIES && outsideSensorAvailable) {
-                outsideSensorAvailable = false;
-                preferences.putBool("out_sens_avail", outsideSensorAvailable);  // Mark outside sensor as unavailable
-                printToTelnetErr("Outside sensor marked as unavailable.");
-            }
-        } else {
-            invalidOutsideTempCount = 0;  // Reset counter on valid reading
-            if (!outsideSensorAvailable) {
-                outsideSensorAvailable = true;
-                preferences.putBool("out_sens_avail", outsideSensorAvailable);  // Mark sensor as available
-                printToTelnet("Outside sensor marked as available again.");
-            }
-        }
-
+        if (outSensorCounter < MAX_INVALID_RETRIES || now - outSensorTimer > RECHECK_INTERVAL) {
+            outSensorTimer = now; // Reset the timer
+            previousReading = outsideTemp;
+            bool validOutsideTemp = outsideSensorAvailable 
+                ? readTemperature(sensor2Address, outsideTemp, MIN_VALID_TEMP, MAX_OUTSIDE_TEMP)
+                : false;
+            updateSensorAvailability(validOutsideTemp, outsideSensorAvailable, "outside", previousReading, outsideTemp);
+            if (validOutsideTemp) outSensorCounter = 0;
+            else outSensorCounter++;
+        } else outsideTemp = DEVICE_DISCONNECTED_C;
+        // Determine the appropriate delay time
+        int delayTime = ((inSensorCounter > 0 && inSensorCounter < MAX_INVALID_RETRIES) ||
+                        (outSensorCounter > 0 && outSensorCounter < MAX_INVALID_RETRIES)) 
+                         ? SHORT_DELAY : LONG_DELAY;
 
         // Delay the task for 20 seconds (non-blocking delay in FreeRTOS)
-        vTaskDelay(20000 / portTICK_PERIOD_MS);
+        vTaskDelay(delayTime / portTICK_PERIOD_MS);
     }
 }
 
@@ -429,6 +511,7 @@ void temperatureTask(void *parameter) {
  */
 void updateCoolingSetPoint(float newSetPoint) {
     coolingSetPoint = newSetPoint;
+    initializeSkewedPoints(coolingSetPoint);  // Initialize the skewed points.
     preferences.putFloat("setPoint", coolingSetPoint);  // Save the new set point to Preferences
     printToTelnet("Cooling set point updated: " + String(coolingSetPoint) + " °C");
 }

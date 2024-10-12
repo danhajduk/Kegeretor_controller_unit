@@ -205,7 +205,7 @@ void processTelnetCommand(const String &command) {
   } else if (trimmedCommand.equalsIgnoreCase("cooloff")) {
     // Manually turnoff the cooling system
     if (coolingOn) {
-      deactivateCooling("manually");
+      deactivateCooling("Cooling system manually deactivated.");
     } else {
       printToTelnet("Cooling is already OFF.");
     }
@@ -262,9 +262,7 @@ void printToTelnetErr(const String &msg) {
   String errMsg = "\033[31mERROR : \033[0m" + msg;
   debugMSG[debugIndex] = getCurrentTime() + "> " + errMsg;
   Serial.println(debugMSG[debugIndex]);
-  // telnetClient.println(debugMSG[debugIndex]);
   debugIndex = (debugIndex + 1) % 14;  // Update debugIndex, looping it within the array bounds
-  printDashboard();
 }
 
 /**
@@ -279,9 +277,7 @@ void printToTelnetErr(const String &msg) {
 void printToTelnet(const String &msg) {
   debugMSG[debugIndex] = getCurrentTime() + "> " + msg;
   Serial.println(debugMSG[debugIndex]);
-  // telnetClient.println(debugMSG[debugIndex]);
   debugIndex = (debugIndex + 1) % 14;  // Update debugIndex, looping it within the array bounds
-  printDashboard();
 }
 
 /**
@@ -295,9 +291,7 @@ void printToTelnet(const String &msg) {
 void printToTelnet(const char *msg) {
   debugMSG[debugIndex] = getCurrentTime() + "> " + String(msg);
   Serial.println(debugMSG[debugIndex]);
-  // telnetClient.println(debugMSG[debugIndex]);
   debugIndex = (debugIndex + 1) % 14;  // Update debugIndex, looping it within the array bounds
-  printDashboard();
 }
 
 /**
@@ -311,12 +305,33 @@ void printKegeratorStatus() {
 }
 
 /**
+ * @brief Checks if the Telnet client is available and connected.
+ * 
+ * This function verifies whether a Telnet client is connected to the ESP32 device.
+ * It checks both the existence of the client and the connection status to ensure
+ * that any messages sent via Telnet will be received by the connected client.
+ * 
+ * @return bool Returns true if a Telnet client is available and connected, 
+ *              otherwise returns false.
+ */
+bool isTelnetAvailable() {
+    // Check if there is a valid Telnet client and if it is connected
+    if (telnetClient && telnetClient.connected()) {
+        return true;  // Telnet client is available and connected
+    } else {
+        return false;  // No Telnet client is connected
+    }
+}
+
+/**
  * @brief Displays the dashboard on the Telnet client.
  * 
  * This function clears the Telnet client’s screen, prints various system status 
  * values, and displays the last few debug messages stored in a circular buffer.
  */
 void printDashboard() {
+  // if telnet is not available exit
+  if (!isTelnetAvailable()) return;
   // Clear the screen
   telnetClient.print("\033[2J");
 
@@ -377,6 +392,8 @@ void printDashboard() {
     unsigned long timeSinceLastOn = (millis() - lastCoolingOnTime) / 1000;  // Convert to seconds
     telnetClient.print("\033[8;1HTime Since Last Cooling On : " + formatTime(timeSinceLastOn) + "\n");
   }
+  telnetClient.print("\033[8;56HActivation Point  : " + String(skewedActivationPoint) + "°C -" + 
+                              " Deactivation Point: " + String(skewedDeactivationPoint) + "°C" + "\n");
 
   bool crushSetup = preferences.getBool("crush_setup", false);
   bool crushStarted = preferences.getBool("crush_started", false);
@@ -419,7 +436,7 @@ String formatTime(unsigned long seconds) {
  * @param blink If true, enables blinking text (optional, default is false).
  * @param underline If true, enables underlined text (optional, default is false).
  */
-void printToTelnetFormatted(const String& msg, const String& color = "white", int row = 1, int column = 1, bool blink = false, bool underline = false) {
+void printToTelnetFormatted(const String& msg, const String& color, int row, int column, bool blink, bool underline) {
     // ANSI escape code for resetting all styles
     String resetStyle = "\033[0m";
 

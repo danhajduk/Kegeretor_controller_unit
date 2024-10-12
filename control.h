@@ -10,8 +10,17 @@
 #define MAX_OUTSIDE_TEMP 70.0         // Maximum valid temperature for outside
 #define MAX_INVALID_RETRIES 5         // Maximum consecutive invalid readings before marking the sensor as unavailable
 #define RECHECK_INTERVAL 300000       // 5 minutes in milliseconds
+#define SHORT_DELAY 5000            // 5 seconds in milliseconds
+#define LONG_DELAY 20000            // 20 seconds in milliseconds
+
+// Cooling control sefenitions
+#define SKEW_FACTOR 0.1
+
 
 // Function declarations
+void initializeSkewedPoints(float setPoint); // Initializes the skewed points based on the set point.
+void updateSkewedPoints(float setPoint, float avgTemp, float skewFactor);
+                                             // Updates the skewed activation and deactivation points based on the deviation.
 void setupControl();                         // Initialize control logic
 void handleControl();                        // Handle control logic (temperature, relays, etc.)
 void temperatureTask(void *parameter);       // Update temperature readings in the background
@@ -40,5 +49,8 @@ extern unsigned long lastCoolingOffTime;     // Timestamp of the last cooling OF
 extern float coolingSetPoint;                // The cooling set point temperature
 extern float insideTemp;                     // The current inside temperature
 extern unsigned long coolingDelay;           // Minimum delay between cooling cycles
+// Global variables for skewed activation and deactivation points
+extern float skewedActivationPoint;
+extern float skewedDeactivationPoint;
 
 #endif  // CONTROL_H

@@ -6,32 +6,49 @@
 // Function: setup()
 // Initializes the system, sets up network connectivity, OTA updates, control logic, etc.
 void setup() {
-    Serial.begin(115200); // Start serial communication at 115200 baud rate for debugging
+    Serial.begin(115200); // Start serial communication
+    delay(100);           // Allow some time for Serial to initialize
+
+    printToTelnet("Serial Initialized");
     printToTelnet("Starting setup ...");
 
+    printToTelnet("Connecting to WiFi...");
     connectToWiFi();  // Connect to WiFi network
+    printToTelnet("WiFi connected.");
+
+    Serial.println("Initializing NTP...");
     initNTP();        // Initialize Network Time Protocol (NTP) for time synchronization
+    printToTelnet("NTP Initialized.");
 
-    setupOTA(DEVICE_NAME); // Setup OTA updates (useful for remote firmware updates)
-    setupTelnet();         // Setup Telnet for remote debugging and monitoring
-    setupControl();        // Initialize control logic (e.g., temperature sensors, relays)
-    
-    printToTelnet("Kegerator Control System started."); // Log message to Telnet
+    printToTelnet("Setting up OTA...");
+    setupOTA(DEVICE_NAME); // Setup OTA updates
+    printToTelnet("OTA Ready.");
 
-    // Ensure the power relay is initially ON (LOW may represent ON state)
+    printToTelnet("Setting up Telnet...");
+    setupTelnet();         // Setup Telnet for remote debugging
+    printToTelnet("Telnet Server Ready.");
+
+    printToTelnet("Setting up control...");
+    setupControl();        // Initialize control logic (temperature sensors, relays)
+    printToTelnet("Control system initialized.");
+
+    printToTelnet("Kegerator Control System started.");
+
+    // Ensure the power relay is initially ON
+    printToTelnet("Turning on Power Relay...");
     digitalWrite(POWER_RELAY, TURN_ON); 
+    printToTelnet("Power Relay ON");
 
-    // Create a FreeRTOS task to periodically update time from NTP server
-    // This task runs on core 0 of the ESP32.
     xTaskCreatePinnedToCore(
-        updateNTPTask,    // Task function that updates NTP
-        "NTPUpdateTask",  // Task name (for debugging purposes)
-        4096,             // Stack size for the task (4 KB)
-        NULL,             // No parameters are passed to the task
-        1,                // Task priority (1 is a normal priority)
-        NULL,             // Task handle (not required here)
-        0                 // Core number (0 means run on the first core)
+        updateNTPTask,    // Task function
+        "NTPUpdateTask",  // Task name
+        4096,             // Stack size
+        NULL,             // No parameters passed to the task
+        1,                // Task priority
+        NULL,             // Task handle
+        0                 // Core number
     );
+    printToTelnet("NTP Update Task created.");
 }
 
 // Global variable to track last status

@@ -9,7 +9,8 @@
 #include "config.h"
 
 const char* firmwareVersion = VERSION;  // Current firmware version
-const char* versionURL = "https://raw.githubusercontent.com/your-repo/main/version.txt";  // URL tox version file
+// URL tox version file
+const char* versionURL = "https://raw.githubusercontent.com/danhajduk/Kegeretor_controller_unit/refs/heads/main/version.txt";  
 const char* firmwareURL = "https://github.com/your-repo/releases/download/v1.1/firmware.bin";  // URL to binary file
 
 /**

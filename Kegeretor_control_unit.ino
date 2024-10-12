@@ -59,6 +59,8 @@ void setup() {
 
 // Global variable to track last status
 int lastStat = 0;
+int lastCheck = 0;
+int Interval = 20000;
 
 // Function: loop()
 // Continuously runs the main control logic, handles OTA, Telnet, and sensors.
@@ -67,5 +69,10 @@ void loop() {
     handleTelnet();       // Process Telnet commands for remote debugging
     handleControl();      // Main control loop for managing temperature, relays, etc.
     handleMQTT();         // handle MQTT MQTT loop and ensures the connection stays alive.
-    
+   unsigned long currentMillis = millis();
+    if (currentMillis - lastCheck >= Interval) {
+        checkForUpdates();
+        lastCheck = currentMillis;  // Update the last time it was called
+    }
+
 }

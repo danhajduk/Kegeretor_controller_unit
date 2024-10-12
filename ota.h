@@ -6,5 +6,5 @@
 
 // Function Declarations
 void setupOTA(const char* hostname);  // Function to set up OTA updates
-
+void downloadAndUpdate(const char* url);
 #endif // OTA_H

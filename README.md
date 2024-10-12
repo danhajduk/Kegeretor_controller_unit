@@ -101,13 +101,96 @@ To use OTA:
 
 ### Telnet Debugging
 
-You can monitor and interact with the device via Telnet for remote debugging. Simply connect to the device’s IP address on port 23 using a Telnet client.
+The Kegerator Control Unit supports remote debugging via Telnet. By connecting to the ESP32's IP address through Telnet, you can monitor real-time status updates and send commands to control various aspects of the system.
 
-1. Set up Telnet using the `setupTelnet()` function.
-2. Connect to the device via Telnet:
+#### Setting up Telnet
+
+1. **Enable Telnet Server:**  
+   The Telnet server is initialized in the `setup()` function with `setupTelnet()`. By default, the server runs on port 23.
+
+2. **Connect via Telnet:**  
+   You can connect to the ESP32 via Telnet using the device's IP address:
+
    ```bash
-   telnet [ESP32 IP] 23
+   telnet [ESP32_IP] 23
    ```
+
+   Replace `[ESP32_IP]` with the actual IP address assigned to your ESP32 device.
+
+#### Available Telnet Commands
+
+Once connected via Telnet, you can issue the following commands to interact with the system:
+
+| Command                 | Description                                                     |
+|-------------------------|-----------------------------------------------------------------|
+| `stat`                  | Displays the current status of the kegerator (temperature, relays, fans). |
+| `set <value>`           | Updates the cooling setpoint temperature. Example: `set 4.5`    |
+| `cool`                  | Manually trigger the cooling system.                            |
+| `cooloff`               | Manually turn off the cooling system.                           |
+| `reboot`                | Reboots the ESP32 device.                                       |
+| `crush <temp> <time>`   | Starts a "cold crush" process for a specific temperature and duration. Example: `crush 2.0 24` |
+| `help`                  | Displays a list of available commands.                          |
+
+#### Example Telnet Session
+
+1. **Connect to the Device**:  
+   Open your terminal and connect to the ESP32 using its IP address:
+
+   ```bash
+   telnet 192.168.1.100 23
+   ```
+
+2. **Check Status**:  
+   After connecting, type `stat` to see the current state of the system:
+
+   ```
+   > stat
+   Inside Temp: 4.2°C
+   Outside Temp: 22.3°C
+   Cooling: ON
+   Fan: OFF
+   ```
+
+3. **Change Cooling Setpoint**:  
+   You can update the cooling setpoint using the `set` command:
+
+   ```
+   > set 3.5
+   Cooling setpoint updated to 3.5°C
+   ```
+
+4. **Start Cold Crush Process**:  
+   If you want to start a cold crush process, use the `crush` command with the desired temperature and duration:
+
+   ```
+   > crush 2.0 24
+   Cold crush process started at 2.0°C for 24 hours
+   ```
+
+5. **Reboot the System**:  
+   If you need to reboot the device, simply issue the `reboot` command:
+
+   ```
+   > reboot
+   Device restarting...
+   ```
+
+6. **Disconnect from Telnet**:  
+   When you're done, type `exit` to disconnect:
+
+   ```
+   > exit
+   Connection closed.
+   ```
+
+#### Command Error Handling
+
+If an invalid command is entered, the system will return an error message and display the list of available commands:
+
+```bash
+Unknown command: [command]
+Available commands: stat, set <value>, cool, cooloff, crush <temp> <time>
+```
 
 ### Temperature Control
 

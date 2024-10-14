@@ -4,8 +4,11 @@
 // Include necessary libraries and sensitive credentials
 #include <ArduinoOTA.h>
 
+// External variables declerations
+extern String newVersion;
+
 // Function Declarations
 void setupOTA(const char* hostname);  // Function to set up OTA updates
-void downloadAndUpdate(const char* url);
+void downloadAndUpdate();
 void checkForUpdates();
 #endif // OTA_H

@@ -31,4 +31,5 @@ void sendSensorData(float insideTemp, float outsideTemp, bool coolingOn);
 // Handles the MQTT loop, ensuring the connection stays alive and periodically publishes sensor data
 void handleMQTT();
 
+void setBeerAvailability(const String& beerType, int daysFromNow);
 #endif // MQTT_H

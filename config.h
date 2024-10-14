@@ -9,7 +9,7 @@
 #include <DallasTemperature.h> // Library for handling Dallas temperature sensors
 #include <Preferences.h>  // Preferences library for non-volatile storage
 
-#define VERSION "0.1"
+#define VERSION "0.1.1"
 
 // Uncomment the following line to enable debugging mode
 #define DEBUG_MODE

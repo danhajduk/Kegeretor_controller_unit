@@ -58,7 +58,7 @@ unsigned long coolingOffDuration = 0;  // How long the cooling was OFF
 // Global variable to track fan status
 bool fanOn = false;
 
-const int bufferSize = 120;  // Buffer to store 60 temperature readings (1 per minute for an hour)
+const int bufferSize = 360;  // Buffer to store 60 temperature readings (1 per minute for an hour)
 float insideTempBuffer[bufferSize];  // Array to store the inside temperature readings
 int bufferIndex = 0;  // Tracks the current position in the buffer
 bool bufferFilled = false;  // Tracks if the buffer has been filled with 60 values yet

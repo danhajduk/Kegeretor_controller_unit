@@ -6,6 +6,7 @@
 #include <DallasTemperature.h>
 #include <WiFiUdp.h>
 #include <time.h>
+#include "mqtt.h"
 
 WiFiServer telnetServer(TELNET_PORT);  // Create a Telnet server on the defined port
 WiFiClient telnetClient;               // Create a Telnet client
@@ -241,7 +242,11 @@ void processTelnetCommand(const String &command) {
       printToTelnetErr("Invalid command format. Usage: crush <temp> <time>");
     }
   }
-
+  else if (command.startsWith("setbeer1")) {
+      setBeerAvailability("beer1", 3);  // Beer1 available in 3 days
+  } else if (command.startsWith("setbeer2")) {
+      setBeerAvailability("beer2", 3);  // Beer2 available in 3 days
+    }
   else {
     // Unknown command
     printToTelnetErr("Unknown command: " + trimmedCommand);

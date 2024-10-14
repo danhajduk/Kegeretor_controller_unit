@@ -7,11 +7,15 @@
 #include "utils.h"
 #include <Arduino.h>  // Ensure Arduino types like String are available
 #include "config.h"
+#include <WiFiClientSecure.h>  // Include the library
 
 const char* firmwareVersion = VERSION;  // Current firmware version
 // URL tox version file
 const char* versionURL = "https://raw.githubusercontent.com/danhajduk/Kegeretor_controller_unit/refs/heads/main/version.txt";  
-const char* firmwareURL = "https://github.com/your-repo/releases/download/v1.1/firmware.bin";  // URL to binary file
+const char* firmwareURL = "https://github.com/danhajduk/Kegeretor_controller_unit/releases/download/";  // URL to binary file
+const char* fwFile = "Kegeretor_FW.bin";
+
+String newVersion = "" ;
 
 /**
  * @brief Initializes the OTA (Over-the-Air) update service.
@@ -64,14 +68,12 @@ void checkForUpdates() {
     int httpCode = http.GET();
 
     if (httpCode == 200) {
-        String newVersion = http.getString();
+        newVersion = http.getString();
         newVersion.trim();  // Remove any extra whitespace
 
         // If a new version is available, start the update
         if (newVersion != firmwareVersion) {
             printToTelnet("New firmware version detected: " + newVersion);
-        } else {
-            printToTelnet("Firmware is up to date.");
         }
     } else {
         printToTelnet("Error checking firmware version: " + String(httpCode));
@@ -85,18 +87,41 @@ void checkForUpdates() {
  * 
  * @param url The URL to the new firmware binary.
  */
-void downloadAndUpdate(const char* url) {
-    WiFiClient client;
+void downloadAndUpdate() {
+    WiFiClientSecure client;
+    client.setInsecure();  // Disable SSL certificate verification for now
+
     HTTPClient http;
 
-    printToTelnet("Starting OTA update from: " + String(url));
+    checkForUpdates();
+    if (newVersion == VERSION) {
+        printToTelnet("Already on the latest version.");
+        return;
+    }
+
+    String url1 = firmwareURL + newVersion + "/" + fwFile;
+    printToTelnet("Starting OTA update from: " + url1);
 
     // Connect to the server hosting the firmware binary
-    http.begin(client, url);
+    printToTelnet("Initializing HTTP client...");
+    http.begin(client, url1);
     int httpCode = http.GET();
+
+    // Handle redirect (HTTP 302)
+    if (httpCode == 302) {
+        String newLocation = http.header("Location");
+        printToTelnet("Redirecting to: " + newLocation);
+        http.end();  // Close the current connection
+
+        // Start new connection to the redirected location
+        http.begin(client, newLocation);
+        httpCode = http.GET();
+    }
 
     if (httpCode == 200) {
         int contentLength = http.getSize();
+        printToTelnet("Content Length: " + String(contentLength));
+
         if (contentLength > 0) {
             if (Update.begin(contentLength)) {
                 printToTelnet("Downloading firmware...");
@@ -117,7 +142,7 @@ void downloadAndUpdate(const char* url) {
                         printToTelnet("Error during OTA update: " + String(Update.getError()));
                     }
                 } else {
-                    printToTelnet("Failed to write all the bytes.");
+                    printToTelnet("Failed to write all the bytes. Written: " + String(written));
                 }
             } else {
                 printToTelnet("Not enough space for OTA update.");
@@ -126,7 +151,7 @@ void downloadAndUpdate(const char* url) {
             printToTelnet("No content in the firmware file.");
         }
     } else {
-        printToTelnet("Failed to download firmware: " + String(httpCode));
+        printToTelnet("Failed to download firmware. HTTP Code: " + String(httpCode));
     }
 
     http.end();
